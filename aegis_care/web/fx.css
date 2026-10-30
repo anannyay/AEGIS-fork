@@ -1,0 +1,277 @@
+/* ------------------------------------------------------------------
+ * AEGIS-Care visual layer (loaded after styles.css).
+ *
+ * Direction: "containment field". The console's one loud moment is the live
+ * lineage graph in the hero (fx.js): contamination spreads coral, a repair
+ * wave turns it mint, a shield closes. Everything else stays quiet and
+ * clinical: deep teal-black chrome, soft layered surfaces, Geist type, and
+ * motion only where the user acts (spotlight, tab slide, confirmations).
+ *
+ * Palette
+ *   abyss   #031418  chrome, hero ground
+ *   tide    #0b2c33  raised dark surfaces
+ *   signal  #5fe3d8  live state, focus, primary action on dark
+ *   coral   #ff7a6b  contamination (field only; UI keeps --bad)
+ *   mint    #8ef0b6  repaired (field only; UI keeps --good)
+ *   mist    #eef4f2  light-theme page
+ * ------------------------------------------------------------------ */
+/* Geist and Geist Mono (SIL OFL 1.1), self-hosted so the console stays offline-capable. */
+@font-face { font-family: "Geist"; src: url("/static/assets/fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("/static/assets/fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+:root {
+  --fx-abyss: #031418;
+  --fx-tide: #0b2c33;
+  --fx-aqua: #5fe3d8;
+  --fx-coral: #ff7a6b;
+  --fx-mint: #8ef0b6;
+  --fx-dim: rgba(170, 214, 207, .20);
+  --paper: #eef4f2;
+  --surface: #fbfdfc;
+  --line: #d5e1dd;
+  --sans: "Geist", "Segoe UI Variable", Aptos, "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --r-lg: 20px;
+  --r-md: 14px;
+  --r-sm: 10px;
+  --shadow: 0 1px 0 rgba(255,255,255,.7) inset, 0 24px 60px -24px rgba(6, 34, 40, .28);
+  --panel-shadow: 0 1px 2px rgba(6, 34, 40, .05), 0 12px 32px -18px rgba(6, 34, 40, .22);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #041014;
+    --surface: #0a1a1f;
+    --line: #19343b;
+    --shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 28px 70px -28px rgba(0, 0, 0, .7);
+    --panel-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 14px 36px -20px rgba(0, 0, 0, .65);
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #041014;
+  --surface: #0a1a1f;
+  --line: #19343b;
+  --shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 28px 70px -28px rgba(0, 0, 0, .7);
+  --panel-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 14px 36px -20px rgba(0, 0, 0, .65);
+}
+
+body { font-feature-settings: "ss01", "cv11"; letter-spacing: -.005em; }
+
+/* ---------------- chrome ---------------- */
+.app-header {
+  background: color-mix(in srgb, var(--fx-abyss) 96%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-bottom: 0;
+  box-shadow: 0 1px 0 rgba(95, 227, 216, .12);
+}
+.header-context { text-transform: none; letter-spacing: 0; font-size: 13px; color: #8fb1aa; }
+.brand-word { letter-spacing: .02em; }
+.header-utility, .role-switch, .theme-toggle { border-radius: 999px !important; }
+.tabs { position: relative; }
+.tabs button { border-bottom-color: transparent !important; font-size: 13px; letter-spacing: 0; }
+.fx-tab-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--fx-aqua) 20%, var(--fx-aqua) 80%, transparent);
+  box-shadow: 0 0 14px rgba(95, 227, 216, .7);
+  border-radius: 2px;
+  transition: transform .42s cubic-bezier(.2, .8, .2, 1), width .42s cubic-bezier(.2, .8, .2, 1), opacity .2s;
+  pointer-events: none;
+}
+.safety-line { background: color-mix(in srgb, var(--fx-abyss) 92%, #0b2c33); letter-spacing: 0; }
+.safety-line span { text-transform: none; }
+
+/* Kickers read as quiet sentence-case labels, not tracked caps. */
+.eyebrow, .section-kicker, .login-overline, .gate-kicker, .gate-confirm-step {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* ---------------- hero: the containment field ---------------- */
+.command-hero {
+  background:
+    radial-gradient(60% 80% at 78% 40%, rgba(11, 44, 51, .95), transparent 70%),
+    radial-gradient(40% 50% at 95% 95%, rgba(95, 227, 216, .08), transparent 70%),
+    var(--fx-abyss);
+}
+.command-hero .hero-image,
+.command-hero .hero-network,
+.command-hero .hero-grid { display: none; }
+.command-hero .hero-scrim {
+  background: linear-gradient(90deg, rgba(3, 20, 24, .92) 0%, rgba(3, 20, 24, .55) 40%, transparent 70%),
+              linear-gradient(0deg, rgba(3, 20, 24, .85) 0, transparent 34%);
+}
+.fx-field-host { position: absolute; inset: 0; z-index: -2; pointer-events: none; }
+.fx-field { display: block; }
+.hero-copy h2 { font-weight: 560; letter-spacing: -.045em; }
+.hero-copy h2 span { color: #8fb1aa; }
+.hero-cta { box-shadow: 0 0 0 1px rgba(95, 227, 216, .5), 0 14px 40px -12px rgba(95, 227, 216, .55); }
+.hero-cta:hover { box-shadow: 0 0 0 1px rgba(95, 227, 216, .8), 0 18px 50px -12px rgba(95, 227, 216, .75); }
+
+.hero-readout {
+  background: rgba(6, 30, 36, .55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(95, 227, 216, .14);
+}
+.hero-readout span { font-family: var(--sans); font-size: 12px; letter-spacing: 0; text-transform: none; }
+
+/* Field legend, so the animation reads as data rather than decoration. */
+.fx-legend {
+  position: absolute;
+  right: max(4vw, 28px);
+  top: 26px;
+  z-index: 1;
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  color: #86a8a1;
+  font-family: var(--mono);
+  font-size: 11px;
+  list-style: none;
+}
+.fx-legend li { display: flex; align-items: center; gap: 7px; }
+.fx-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--fx-aqua); }
+.fx-legend .is-bad i { background: var(--fx-coral); box-shadow: 0 0 8px var(--fx-coral); }
+.fx-legend .is-fixed i { background: var(--fx-mint); box-shadow: 0 0 8px var(--fx-mint); }
+.fx-legend .is-wall i { background: transparent; border: 1px dashed var(--fx-mint); }
+
+/* SplitReveal: words settle once on first paint. */
+.fx-split .fx-word {
+  display: inline-block;
+  opacity: 0;
+  filter: blur(8px);
+  transform: translateY(.28em);
+  animation: fxWord .8s cubic-bezier(.2, .8, .2, 1) forwards;
+  animation-delay: calc(var(--i) * 55ms + 120ms);
+}
+@keyframes fxWord { to { opacity: 1; filter: blur(0); transform: none; } }
+
+/* ---------------- surfaces ---------------- */
+.panel, .trajectory-theater, .editorial-panel, .gate-confirm, .records-detail,
+.patient-panel-intro, .nurse-workflow, .command-setup, .blast-radius, .assurance-panel,
+.evidence-panel, .progress-card {
+  border-radius: var(--r-lg);
+}
+.panel, .gate-confirm, .records-detail { box-shadow: var(--panel-shadow); }
+.trajectory-theater { overflow: hidden; border-radius: var(--r-lg); }
+.trajectory-viewport { border-radius: 0; }
+.proof-ribbon {
+  overflow: hidden;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  box-shadow: var(--panel-shadow);
+}
+.stat, .notice, .cert, .held-card, .queue-card, .change-card, .outcome-card,
+.patient-row, .record-stat, .rollup, .cmd-step, .operator-case, .accessibility-card,
+.quick-summary, .stage { border-radius: var(--r-md); }
+.record-stats, .outcome-cards { gap: 10px; }
+input, select, textarea { border-radius: var(--r-sm) !important; }
+
+/* Buttons: soft corners, one clear focus treatment. */
+.btn { border-radius: var(--r-sm); font-weight: 650; }
+.btn:not(.outline):not(.ghost):not(.danger) {
+  box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 8px 20px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.btn.ink:not(:disabled) { box-shadow: 0 1px 0 rgba(255,255,255,.12) inset, 0 8px 22px -12px rgba(3, 20, 24, .7); }
+:focus-visible { outline: 2px solid var(--fx-aqua) !important; outline-offset: 3px; }
+
+/* ---------------- spotlight cards ---------------- */
+.role-card, .stage, .proof-ribbon .metric, .patient-row, .outcome-card, .queue-card,
+.operator-case, .change-card, .accessibility-card {
+  position: relative;
+  isolation: isolate;
+}
+.role-card::before, .stage::before, .proof-ribbon .metric::before, .patient-row::before,
+.outcome-card::before, .queue-card::before, .operator-case::before, .change-card::before,
+.accessibility-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(320px circle at var(--spot-x, 50%) var(--spot-y, 50%),
+              color-mix(in srgb, var(--accent) 14%, transparent), transparent 62%);
+  opacity: 0;
+  transition: opacity .3s ease;
+  pointer-events: none;
+}
+.role-card:hover::before, .stage:hover::before, .proof-ribbon .metric:hover::before,
+.patient-row:hover::before, .outcome-card:hover::before, .queue-card:hover::before,
+.operator-case:hover::before, .change-card:hover::before, .accessibility-card:hover::before { opacity: 1; }
+
+/* ---------------- role gate ---------------- */
+.login-hero {
+  border-radius: 24px;
+  border: 1px solid rgba(95, 227, 216, .14);
+  background:
+    radial-gradient(70% 120% at 85% 30%, rgba(11, 44, 51, .9), transparent 70%),
+    var(--fx-abyss);
+}
+.login-hero-image, .login-hero-grid { display: none; }
+.login-hero-scrim { background: linear-gradient(90deg, rgba(3, 20, 24, .96) 0%, rgba(3, 20, 24, .7) 45%, transparent 80%); }
+.login-trust-row b { font-family: var(--mono); color: var(--fx-aqua); }
+.role-card {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  border-top-width: 1px;
+  box-shadow: var(--panel-shadow);
+}
+.role-card.accent-good, .role-card.accent-accent, .role-card.accent-warn, .role-card.accent-muted { border-top-color: var(--line); }
+.role-card::after {
+  content: "";
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  top: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--outline-border);
+}
+.role-card.accent-good::after { background: var(--good); }
+.role-card.accent-accent::after { background: var(--accent); }
+.role-card.accent-warn::after { background: var(--warn); }
+.role-card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+.role-card[aria-checked="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), var(--shadow);
+}
+.role-card-avatar { border-radius: 12px; }
+.role-card-duties li, .role-card-duties { font-family: var(--sans); }
+.gate-confirm { border-top-width: 1px !important; }
+
+/* ---------------- incident command / records ---------------- */
+.blast-radius, #graph-svg, .trajectory-canvas { border-radius: var(--r-md); }
+.cmd-status, .rollup { border-radius: var(--r-md); }
+
+.patient-row.is-selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.patient-task-tab[aria-selected="true"] { border-bottom-width: 2px; }
+.chat-toggle {
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(95, 227, 216, .45), 0 16px 40px -14px rgba(95, 227, 216, .7);
+}
+.chat-panel { border-radius: var(--r-lg); overflow: hidden; }
+
+/* ---------------- motion preferences ---------------- */
+:root[data-motion="reduce"] .fx-split .fx-word { animation: none; opacity: 1; filter: none; transform: none; }
+:root[data-motion="reduce"] .fx-tab-bar { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .fx-split .fx-word { animation: none; opacity: 1; filter: none; transform: none; }
+  .fx-tab-bar { transition: none; }
+}
+
+@media (max-width: 820px) {
+  .fx-legend { display: none; }
+  .fx-field-host { opacity: .25; }
+}
+
+/* Split words must keep the headline's own two-tone colouring. */
+.hero-copy h2 .fx-word, .login-hero h1 .fx-word { color: inherit; }
+.login-hero { isolation: isolate; }
+.login-hero .fx-field-host { opacity: .8; }
+.nurse-path, .records-toolbar input, .patient-list-filters, .empty-teach { border-radius: var(--r-md); }
