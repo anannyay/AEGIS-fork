@@ -358,13 +358,13 @@ TRUST_ORDER = {"quarantined": 0, "suspected": 1, "repaired": 2,
 
 
 def _patient_display(env: Any, patient_id: str) -> Dict[str, Any]:
-    """Name and MRN for a patient token, or a graceful placeholder."""
+    """Use the fixed registry identity throughout the patient workspace."""
+    fixed = state.registry.patient(patient_id)
+    if fixed:
+        return {"id": patient_id, "name": fixed["name"],
+                "mrn": fixed["mrn"], "birth_date": fixed["birth_date"]}
     resource = env.fhir.read("Patient", patient_id)
     if not resource:
-        fixed = state.registry.patient(patient_id)
-        if fixed:
-            return {"id": patient_id, "name": fixed["name"],
-                    "mrn": fixed["mrn"], "birth_date": fixed["birth_date"]}
         return {"id": patient_id, "name": patient_id, "mrn": None, "birth_date": None}
     name = (resource.get("name") or [{}])[0]
     given = " ".join(name.get("given") or [])

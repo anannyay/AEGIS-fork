@@ -1,11 +1,14 @@
 """API surface: FHIR endpoints, incidents, recovery, baselines, review, audit."""
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
 from aegis_care.api.app import app, state
 from aegis_care.clinical_registry import ClinicalRegistry
+from aegis_care.fhir.generator import generate_bundle
 
 
 @pytest.fixture
@@ -382,9 +385,41 @@ class TestPatientView:
 
 
 class TestClinicalRegistry:
+    def test_patient_names_are_distinct_and_existing_activity_survives_upgrade(self, tmp_path):
+        path = tmp_path / "clinical.sqlite3"
+        registry = ClinicalRegistry(path)
+        patients = registry.patients()
+        assert len(patients) == 160
+        assert len({row["name"] for row in patients}) == 160
+        assert registry.patient("S1054")["name"] == "Rania Chowdhury"
+        assert registry.patient("S1030")["name"] != registry.patient("S1082")["name"]
+
+        # Recreate the old duplicate-name database, including one local edit.
+        original = generate_bundle(160)["Patient"]
+        with sqlite3.connect(path) as db:
+            for patient in original:
+                name = patient["name"][0]
+                display = " ".join(name["given"] + [name["family"]])
+                db.execute("UPDATE patients SET name = ? WHERE id = ?",
+                           (display, patient["id"]))
+            db.execute("UPDATE patients SET name = ? WHERE id = ?",
+                       ("Custom Patient", "S1000"))
+        record = next(row for row in registry.records("S1001")
+                      if row["status"] == "available" and not row["restricted"])
+        assert registry.transfer(record["record_key"], "S1001", "Ward A")["status"] == "completed"
+        original_mrns = {row["id"]: row["mrn"] for row in patients}
+
+        upgraded = ClinicalRegistry(path)
+        upgraded_patients = upgraded.patients()
+        assert len({row["name"] for row in upgraded_patients}) == 160
+        assert upgraded.patient("S1000")["name"] == "Custom Patient"
+        assert {row["id"]: row["mrn"] for row in upgraded_patients} == original_mrns
+        assert upgraded.summary("S1001")["completed_transfers"] == 1
+
     def test_fixed_patients_and_automatic_scan(self, client):
         body = client.get("/api/patients", params={"only_with_memory": False}).json()
         assert body["count"] == 160
+        assert len({row["patient"]["name"] for row in body["patients"]}) == 160
         assert all(row["source_records"] > 0 for row in body["patients"])
         flagged = [row for row in body["patients"] if row["source_held"]]
         assert len(flagged) == 6

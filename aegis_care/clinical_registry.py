@@ -15,11 +15,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import DATA_DIR
-from .fhir.generator import generate_bundle
+from .fhir.generator import GIVEN_NAMES, generate_bundle
 
 PATIENT_COUNT = 160
 DESTINATIONS = ("Emergency", "Ward A", "Ward B", "ICU", "Outpatient")
 RESOURCE_TYPES = ("Observation", "Condition", "Encounter", "MedicationRequest")
+MISFILED_SOURCE_INDICES = (7, 29, 53, 81, 117, 143)
 
 
 def _now() -> str:
@@ -33,6 +34,42 @@ def _label(resource: Dict[str, Any]) -> str:
     if kind == "MedicationRequest":
         return resource.get("medicationCodeableConcept", {}).get("text") or kind
     return resource.get("class", {}).get("code") or kind
+
+
+def _patient_name(patient: Dict[str, Any]) -> str:
+    name = patient["name"][0]
+    return " ".join(name.get("given", []) + [name.get("family", "")]).strip()
+
+
+def _distinct_registry_names(patients: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Give every demo chart a distinct name while retaining familiar flagged names."""
+    # Keep the original name on the first flagged chart in each duplicate-name
+    # group. This preserves familiar demo examples such as Rania Chowdhury.
+    flagged_charts = {
+        f"S{1000 + (source_index + 1) % PATIENT_COUNT}"
+        for source_index in MISFILED_SOURCE_INDICES
+    }
+    ordered = sorted(patients, key=lambda patient: (
+        patient["id"] not in flagged_charts, patient["id"]))
+    names: Dict[str, str] = {}
+    used: set[str] = set()
+    for patient in ordered:
+        name = patient["name"][0]
+        family = name["family"]
+        given = name["given"][0]
+        display = f"{given} {family}"
+        if display in used:
+            start = GIVEN_NAMES.index(given)
+            for offset in range(1, len(GIVEN_NAMES) + 1):
+                candidate = f"{GIVEN_NAMES[(start + offset) % len(GIVEN_NAMES)]} {family}"
+                if candidate not in used:
+                    display = candidate
+                    break
+            else:
+                raise ValueError(f"Not enough distinct synthetic names for {family}")
+        names[patient["id"]] = display
+        used.add(display)
+    return names
 
 
 class ClinicalRegistry:
@@ -86,18 +123,27 @@ class ClinicalRegistry:
             report_columns = {row[1] for row in db.execute("PRAGMA table_info(manual_reports)")}
             if "resolution_note" not in report_columns:
                 db.execute("ALTER TABLE manual_reports ADD COLUMN resolution_note TEXT")
-            if db.execute("SELECT COUNT(*) FROM patients").fetchone()[0]:
-                return
             fixture = generate_bundle(PATIENT_COUNT)
+            names = _distinct_registry_names(fixture["Patient"])
+            if db.execute("SELECT COUNT(*) FROM patients").fetchone()[0]:
+                # Upgrade databases seeded before names were made distinct.
+                # A name edited locally by a user is left alone.
+                for patient in fixture["Patient"]:
+                    original = _patient_name(patient)
+                    distinct = names[patient["id"]]
+                    if distinct != original:
+                        db.execute(
+                            "UPDATE patients SET name = ? WHERE id = ? AND name = ?",
+                            (distinct, patient["id"], original),
+                        )
+                return
             for patient in fixture["Patient"]:
-                name = patient["name"][0]
-                display = " ".join(name.get("given", []) + [name.get("family", "")]).strip()
                 db.execute("INSERT INTO patients VALUES (?, ?, ?, ?)",
-                           (patient["id"], display,
+                           (patient["id"], names[patient["id"]],
                             patient["identifier"][0]["value"], patient["birthDate"]))
             # Six deliberately misfiled synthetic source records give the
             # automatic identity scan something real and repeatable to find.
-            misfiled = {f"S{1000 + i}-OBS1" for i in (7, 29, 53, 81, 117, 143)}
+            misfiled = {f"S{1000 + i}-OBS1" for i in MISFILED_SOURCE_INDICES}
             for kind in RESOURCE_TYPES:
                 for resource in fixture[kind]:
                     source = resource["subject"]["reference"].split("/", 1)[1]
