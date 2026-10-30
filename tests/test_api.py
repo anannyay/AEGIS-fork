@@ -476,8 +476,10 @@ class TestClinicalRegistry:
             "description": "The source observation appears duplicated.",
         }).json()
         queue = client.get("/api/review/queue").json()
-        assert any(item.get("report_id") == created["id"]
-                   for item in queue["registry_items"])
+        matching = [item for item in queue["registry_items"]
+                    if item.get("report_id") == created["id"]]
+        assert len(matching) == 1
+        assert matching[0]["observed_at"] == record["observed_at"]
         dismissed = client.post(f"/api/registry/reports/{created['id']}/dismiss",
                                 json={"note": "Checked the source chart; this is valid."})
         assert dismissed.status_code == 200
