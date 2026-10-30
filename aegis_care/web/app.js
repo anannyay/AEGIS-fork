@@ -2155,7 +2155,7 @@ function renderPatientRecord(data, out) {
     const card = el("div", `source-record ${r.status === "held" ? "is-held" : ""}`);
     const value = r.restricted ? "Restricted value" :
       r.value == null ? "" : `${r.value} ${r.unit || ""}`;
-    card.innerHTML = `<div><strong>${esc(r.label)}</strong><small>${esc(r.resource_type)} · ${esc(r.record_key)}</small></div>
+    card.innerHTML = `<div><strong>${esc(r.label)}</strong><small>${esc(r.resource_type)} · ${esc(r.record_key)}</small><small>Recorded: ${esc(r.observed_at || "Date not recorded")}</small></div>
       <div class="source-record-state"><b>${r.status === "held" ? "Held" : "Available"}</b><span>${esc(value)}</span></div>
       ${r.issues.length ? `<p>${r.issues.map(esc).join(" ")}</p>` : ""}`;
     const actions = el("div", "source-record-actions");
@@ -2744,7 +2744,7 @@ async function loadAssuranceQueue() {
       const card = el("div", "queue-card");
       card.innerHTML = `<div class="queue-head"><strong>${item.kind === "automatic" ? "Automatic identity check" : "Manual concern"}</strong><span class="mono muted">${esc(item.patient_id)}</span></div>
         <div class="queue-reason"><span aria-hidden="true">!</span><span>${esc(item.description)}</span></div>
-        <div class="queue-actions"><span class="mono small muted">${esc(item.record_key || "Patient-wide concern")}</span></div>`;
+        <div class="queue-actions"><span class="mono small muted">${esc(item.record_key || "Patient-wide concern")}</span><span class="small muted">Observation recorded: ${esc(item.observed_at || "Date not recorded")}</span></div>`;
       if (item.kind === "manual") {
         const form = el("form", "queue-actions registry-review-form");
         form.innerHTML = `<label>Review note<textarea required minlength="10" maxlength="1000" placeholder="What source did you check, and what did you find?"></textarea></label><button class="btn small" type="submit" value="resolve">Mark addressed</button><button class="btn small ghost" type="submit" value="dismiss">Dismiss as unfounded</button><span class="form-result" aria-live="polite"></span>`;

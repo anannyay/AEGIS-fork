@@ -336,21 +336,33 @@ class ClinicalRegistry:
 
     def review_items(self) -> List[Dict[str, Any]]:
         """Open manual concerns and automatically detected chart mismatches."""
+        def observed_at(raw: Optional[str]) -> Optional[str]:
+            if not raw:
+                return None
+            resource = json.loads(raw)
+            return (resource.get("effectiveDateTime") or resource.get("recordedDate")
+                    or resource.get("authoredOn") or resource.get("period", {}).get("start"))
+
         with self._connect() as db:
             reports = [dict(row) for row in db.execute(
-                "SELECT * FROM manual_reports WHERE status = 'open' ORDER BY id DESC")]
+                "SELECT manual_reports.*, source_records.resource_json "
+                "FROM manual_reports LEFT JOIN source_records "
+                "ON source_records.record_key = manual_reports.record_key "
+                "WHERE manual_reports.status = 'open' ORDER BY manual_reports.id DESC")]
             mismatches = [dict(row) for row in db.execute(
-                "SELECT record_key, chart_patient_id, source_patient_id, label "
+                "SELECT record_key, chart_patient_id, source_patient_id, label, resource_json "
                 "FROM source_records WHERE chart_patient_id != source_patient_id "
                 "ORDER BY chart_patient_id, record_key")]
         return ([{"kind": "manual", "report_id": row["id"],
                   "patient_id": row["patient_id"], "record_key": row["record_key"],
-                  "description": row["description"], "created_at": row["created_at"]}
+                  "description": row["description"], "created_at": row["created_at"],
+                  "observed_at": observed_at(row["resource_json"])}
                  for row in reports] +
                 [{"kind": "automatic", "report_id": None,
                   "patient_id": row["chart_patient_id"],
                   "source_patient_id": row["source_patient_id"],
                   "record_key": row["record_key"],
+                  "observed_at": observed_at(row["resource_json"]),
                   "description": (f"{row['label']} is filed under "
                                   f"{row['chart_patient_id']} but its source identifies "
                                   f"{row['source_patient_id']}. Correct the source chart "
