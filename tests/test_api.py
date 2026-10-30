@@ -483,6 +483,53 @@ class TestClinicalRegistry:
         assert dismissed.status_code == 200
         assert client.get("/api/patients/S1000/record").json()["source_summary"]["open_reports"] == 0
 
+    def test_source_chart_correction_and_separate_manual_resolution(self, client):
+        key = "Observation/S1029-OBS1"
+        source_chart, filed_chart = "S1029", "S1030"
+        before = client.get(f"/api/patients/{filed_chart}/record").json()
+        assert any(r["record_key"] == key and r["status"] == "held"
+                   for r in before["source_records"])
+        report = client.post("/api/registry/reports", json={
+            "patient_id": filed_chart, "record_key": key,
+            "description": "This observation was filed under the wrong chart.",
+        }).json()
+        assert client.post("/api/registry/corrections", json={
+            "record_key": key, "note": "too short",
+        }).status_code in {400, 422}
+        correction = client.post("/api/registry/corrections", json={
+            "record_key": key,
+            "note": "Verified FHIR subject Patient/S1029 against the synthetic source chart.",
+        })
+        assert correction.status_code == 200, correction.text
+        assert correction.json()["to_patient_id"] == source_chart
+        assert not any(i["kind"] == "automatic" and i["record_key"] == key
+                       for i in client.get("/api/review/queue").json()["registry_items"])
+        old = client.get(f"/api/patients/{filed_chart}/record").json()
+        new = client.get(f"/api/patients/{source_chart}/record").json()
+        assert all(r["record_key"] != key for r in old["source_records"])
+        assert old["source_summary"]["source_corrected"] == 1
+        assert any(r["record_key"] == key and r["status"] == "held"
+                   for r in new["source_records"])
+        assert old["source_summary"]["open_reports"] == 1
+        assert new["source_corrections"][0]["record_key"] == key
+        assert client.post("/api/registry/corrections", json={
+            "record_key": key, "note": "Verified again against the source chart.",
+        }).status_code == 400
+        resolved = client.post(f"/api/registry/reports/{report['id']}/resolve", json={
+            "note": "The source association was corrected after reviewing the FHIR subject.",
+        })
+        assert resolved.status_code == 200, resolved.text
+        assert resolved.json()["status"] == "resolved"
+        new = client.get(f"/api/patients/{source_chart}/record").json()
+        assert any(r["record_key"] == key and r["status"] == "available"
+                   for r in new["source_records"])
+        assert client.get(f"/api/patients/{filed_chart}/record").json()["manual_reports"][0]["status"] == "resolved"
+        client.post("/api/system/reset")
+        reset = client.get(f"/api/patients/{filed_chart}/record").json()
+        assert any(r["record_key"] == key and r["status"] == "held"
+                   for r in reset["source_records"])
+        assert reset["source_corrections"] == []
+
     def test_restricted_value_is_not_exposed_to_clinician_record_view(self, client):
         records = client.get("/api/patients/S1000/record").json()["source_records"]
         restricted = [row for row in records if row["restricted"]]

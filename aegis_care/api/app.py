@@ -181,6 +181,11 @@ class ReportResolutionRequest(BaseModel):
     note: str = Field(..., min_length=10, max_length=1000)
 
 
+class SourceCorrectionRequest(BaseModel):
+    record_key: str = Field(..., min_length=3, max_length=160)
+    note: str = Field(..., min_length=10, max_length=1000)
+
+
 # ======================================================================
 # System
 # ======================================================================
@@ -442,7 +447,7 @@ def list_patients(only_with_memory: bool = True) -> Dict[str, Any]:
     for token, bucket in buckets.items():
         source = state.registry.summary(token) if state.registry.patient(token) else {
             "source_records": 0, "source_held": 0, "completed_transfers": 0,
-            "held_transfers": 0, "open_reports": 0,
+            "held_transfers": 0, "open_reports": 0, "source_corrected": 0,
         }
         # One plain-language status per patient - this is what a nurse reads.
         # A patient whose only remaining records were withdrawn is NOT "no
@@ -455,6 +460,8 @@ def list_patients(only_with_memory: bool = True) -> Dict[str, Any]:
             status, headline = "checking", "Being checked"
         elif bucket["repaired"]:
             status, headline = "corrected", "Corrected and safe to use"
+        elif source["source_corrected"]:
+            status, headline = "corrected", "Chart association corrected"
         elif bucket["withdrawn"] and not live:
             status, headline = "withdrawn", "Incorrect entries removed"
         else:
@@ -514,7 +521,7 @@ def patient_record(patient_id: str) -> Dict[str, Any]:
     source_records = state.registry.records(patient_id) if fixed else []
     source_summary = state.registry.summary(patient_id) if fixed else {
         "source_records": 0, "source_held": 0, "completed_transfers": 0,
-        "held_transfers": 0, "open_reports": 0,
+        "held_transfers": 0, "open_reports": 0, "source_corrected": 0,
     }
     return {
         "patient": _patient_display(env, patient_id),
@@ -523,6 +530,7 @@ def patient_record(patient_id: str) -> Dict[str, Any]:
         "source_summary": source_summary,
         "transfers": state.registry.transfers(patient_id) if fixed else [],
         "manual_reports": state.registry.reports(patient_id) if fixed else [],
+        "source_corrections": state.registry.corrections(patient_id) if fixed else [],
         "transfer_destinations": DESTINATIONS,
         "changes": changes,
         "held_for_review": held,
@@ -578,6 +586,30 @@ def dismiss_manual_report(report_id: int, req: ReportResolutionRequest) -> Dict[
     try:
         with state.lock:
             return state.registry.dismiss_report(report_id, req.note)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/registry/reports/{report_id}/resolve")
+def resolve_manual_report(report_id: int, req: ReportResolutionRequest) -> Dict[str, Any]:
+    """Record that a verified synthetic concern was addressed."""
+    try:
+        with state.lock:
+            return state.registry.resolve_report(report_id, req.note)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/registry/corrections")
+def correct_source_record(req: SourceCorrectionRequest) -> Dict[str, Any]:
+    """Refile a demo source record only when its FHIR subject confirms the target."""
+    try:
+        with state.lock:
+            return state.registry.correct_source_association(req.record_key, req.note)
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:

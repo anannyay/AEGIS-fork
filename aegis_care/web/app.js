@@ -2015,6 +2015,10 @@ function renderPatientRecord(data, out) {
     verdict = `${s.corrected} record${s.corrected === 1 ? " was" : "s were"} corrected`;
     tone = "good";
     advice = "The corrected versions are safe to use. Review what changed below.";
+  } else if (ss.source_corrected) {
+    verdict = `${ss.source_corrected} chart association${ss.source_corrected === 1 ? " was" : "s were"} corrected`;
+    tone = "good";
+    advice = "The misfiled source record was moved to the chart identified by its FHIR patient reference. Review the correction history below.";
   } else if (s.withdrawn && !live) {
     verdict = `${s.withdrawn} entr${s.withdrawn === 1 ? "y was" : "ies were"} removed from this record`;
     tone = "warn";
@@ -2256,8 +2260,15 @@ function renderPatientRecord(data, out) {
     panels.report.appendChild(el("h4", "record-section", "Your recent concerns"));
     const history = el("div", "registry-history");
     data.manual_reports.slice(0, 8).forEach((r) => history.appendChild(el("p", null,
-      `<b>${esc(r.status === "open" ? "Awaiting review" : "Reviewed")}</b> · ${esc(r.description)}`)));
+      `<b>${esc(r.status === "open" ? "Awaiting review" : r.status === "resolved" ? "Addressed" : "Dismissed")}</b> · ${esc(r.description)}${r.resolution_note ? `<br><small>Review note: ${esc(r.resolution_note)}</small>` : ""}`)));
     panels.report.appendChild(history);
+  }
+  if (data.source_corrections?.length) {
+    panels.records.appendChild(el("h4", "record-section", "Source chart correction history"));
+    const history = el("div", "registry-history");
+    data.source_corrections.forEach((c) => history.appendChild(el("p", null,
+      `<b>${esc(c.record_key)}</b> · ${esc(c.from_patient_id)} → ${esc(c.to_patient_id)}<br><small>${esc(c.note)} · ${esc(c.created_at)}</small>`)));
+    panels.records.appendChild(history);
   }
 
   panels.records.appendChild(el("h4", "record-section", "Assistant memory (separate from source records)"));
@@ -2736,22 +2747,37 @@ async function loadAssuranceQueue() {
         <div class="queue-actions"><span class="mono small muted">${esc(item.record_key || "Patient-wide concern")}</span></div>`;
       if (item.kind === "manual") {
         const form = el("form", "queue-actions registry-review-form");
-        form.innerHTML = `<label>Reason for dismissing after verification<textarea required minlength="10" maxlength="1000" placeholder="What source did you check?"></textarea></label><button class="btn small ghost" type="submit">Dismiss concern</button><span class="form-result" aria-live="polite"></span>`;
+        form.innerHTML = `<label>Review note<textarea required minlength="10" maxlength="1000" placeholder="What source did you check, and what did you find?"></textarea></label><button class="btn small" type="submit" value="resolve">Mark addressed</button><button class="btn small ghost" type="submit" value="dismiss">Dismiss as unfounded</button><span class="form-result" aria-live="polite"></span>`;
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           const result = form.querySelector(".form-result");
           try {
-            await api(`/api/registry/reports/${item.report_id}/dismiss`, {
+            const decision = event.submitter?.value === "dismiss" ? "dismiss" : "resolve";
+            await api(`/api/registry/reports/${item.report_id}/${decision}`, {
               method: "POST", body: JSON.stringify({ note: form.querySelector("textarea").value }),
             });
-            result.textContent = "Review decision recorded.";
+            toast(decision === "resolve" ? "Concern marked addressed" : "Concern dismissed", { kind: "good" });
             await loadAssuranceQueue();
           } catch (error) { result.textContent = error.message; }
         });
         card.appendChild(form);
       } else {
         card.appendChild(el("p", "small muted queue-guidance",
-          "This check stays open until the source chart association is corrected."));
+          `Current chart: ${esc(item.patient_id)} · Verified FHIR source chart: ${esc(item.source_patient_id)}. This only corrects the synthetic chart association; it does not assess clinical accuracy or close any nurse concern.`));
+        const form = el("form", "queue-actions registry-review-form");
+        form.innerHTML = `<label>Source verification note<textarea required minlength="10" maxlength="1000" placeholder="Describe how you verified the FHIR patient reference"></textarea></label><button class="btn small" type="submit">Correct chart association</button><span class="form-result" aria-live="polite"></span>`;
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const result = form.querySelector(".form-result");
+          try {
+            const correction = await api("/api/registry/corrections", {
+              method: "POST", body: JSON.stringify({ record_key: item.record_key, note: form.querySelector("textarea").value }),
+            });
+            toast("Chart association corrected", { detail: `${correction.from_patient_id} → ${correction.to_patient_id}. Review the nurse concern separately.`, kind: "good" });
+            await loadAssuranceQueue();
+          } catch (error) { result.textContent = error.message; }
+        });
+        card.appendChild(form);
       }
       out.appendChild(card);
     });

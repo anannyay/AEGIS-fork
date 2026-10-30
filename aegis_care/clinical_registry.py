@@ -119,6 +119,14 @@ class ClinicalRegistry:
                 );
                 CREATE INDEX IF NOT EXISTS reports_patient
                     ON manual_reports(patient_id);
+                CREATE TABLE IF NOT EXISTS source_corrections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_key TEXT NOT NULL, from_patient_id TEXT NOT NULL,
+                    to_patient_id TEXT NOT NULL, reviewer_role TEXT NOT NULL,
+                    note TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS source_corrections_chart
+                    ON source_corrections(from_patient_id, to_patient_id);
             """)
             report_columns = {row[1] for row in db.execute("PRAGMA table_info(manual_reports)")}
             if "resolution_note" not in report_columns:
@@ -171,8 +179,8 @@ class ClinicalRegistry:
                 "SELECT * FROM source_records WHERE chart_patient_id = ? "
                 "ORDER BY resource_type, label, record_key", (patient_id,)).fetchall()
             reports = {row[0] for row in db.execute(
-                "SELECT record_key FROM manual_reports WHERE patient_id = ? "
-                "AND status = 'open' AND record_key IS NOT NULL", (patient_id,))}
+                "SELECT record_key FROM manual_reports WHERE status = 'open' "
+                "AND record_key IS NOT NULL")}
         out = []
         for row in rows:
             resource = json.loads(row["resource_json"])
@@ -220,6 +228,51 @@ class ClinicalRegistry:
             rows = db.execute("SELECT * FROM manual_reports WHERE patient_id = ? "
                               "ORDER BY id DESC", (patient_id,)).fetchall()
             return [dict(row) for row in rows]
+
+    def corrections(self, patient_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM source_corrections WHERE from_patient_id = ? "
+                "OR to_patient_id = ? ORDER BY id DESC LIMIT 30",
+                (patient_id, patient_id)).fetchall()
+            return [dict(row) for row in rows]
+
+    def correct_source_association(self, record_key: str, note: str) -> Dict[str, Any]:
+        """Refile a seeded mismatch only when its FHIR subject verifies the source chart."""
+        note = note.strip()
+        if len(note) < 10:
+            raise ValueError("Explain the source verification in at least 10 characters.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM source_records WHERE record_key = ?", (record_key,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("Source record not found.")
+            old_chart = row["chart_patient_id"]
+            source_chart = row["source_patient_id"]
+            if old_chart == source_chart:
+                raise ValueError("This record has no chart identity mismatch to correct.")
+            resource = json.loads(row["resource_json"])
+            if resource.get("subject", {}).get("reference") != f"Patient/{source_chart}":
+                raise ValueError("The FHIR subject does not verify the proposed source chart.")
+            if not db.execute("SELECT 1 FROM patients WHERE id = ?", (source_chart,)).fetchone():
+                raise ValueError("The source patient chart is unavailable.")
+            updated = db.execute(
+                "UPDATE source_records SET chart_patient_id = ? "
+                "WHERE record_key = ? AND chart_patient_id = ?",
+                (source_chart, record_key, old_chart),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("The chart changed during review. Refresh the queue.")
+            cursor = db.execute(
+                "INSERT INTO source_corrections "
+                "(record_key, from_patient_id, to_patient_id, reviewer_role, note, created_at) "
+                "VALUES (?, ?, ?, 'compliance', ?, ?)",
+                (record_key, old_chart, source_chart, note[:1000], _now()),
+            )
+            return {"id": cursor.lastrowid, "record_key": record_key,
+                    "from_patient_id": old_chart, "to_patient_id": source_chart,
+                    "status": "corrected", "note": note[:1000]}
 
     def transfer(self, record_key: str, target_patient_id: str,
                  destination: str) -> Dict[str, Any]:
@@ -296,6 +349,7 @@ class ClinicalRegistry:
                  for row in reports] +
                 [{"kind": "automatic", "report_id": None,
                   "patient_id": row["chart_patient_id"],
+                  "source_patient_id": row["source_patient_id"],
                   "record_key": row["record_key"],
                   "description": (f"{row['label']} is filed under "
                                   f"{row['chart_patient_id']} but its source identifies "
@@ -318,6 +372,21 @@ class ClinicalRegistry:
             return {"id": report_id, "patient_id": row["patient_id"],
                     "status": "dismissed", "resolution_note": note[:1000]}
 
+    def resolve_report(self, report_id: int, note: str) -> Dict[str, Any]:
+        """Close a confirmed concern after a reviewer documents what addressed it."""
+        note = note.strip()
+        if len(note) < 10:
+            raise ValueError("Explain how the concern was addressed in at least 10 characters.")
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM manual_reports WHERE id = ? AND status = 'open'",
+                             (report_id,)).fetchone()
+            if row is None:
+                raise KeyError("Open manual report not found.")
+            db.execute("UPDATE manual_reports SET status = 'resolved', "
+                       "resolution_note = ? WHERE id = ?", (note[:1000], report_id))
+            return {"id": report_id, "patient_id": row["patient_id"],
+                    "status": "resolved", "resolution_note": note[:1000]}
+
     def summary(self, patient_id: str) -> Dict[str, int]:
         rows = self.records(patient_id)
         with self._connect() as db:
@@ -327,19 +396,31 @@ class ClinicalRegistry:
             open_reports = db.execute(
                 "SELECT COUNT(*) FROM manual_reports WHERE patient_id = ? "
                 "AND status = 'open'", (patient_id,)).fetchone()[0]
+            source_corrected = db.execute(
+                "SELECT COUNT(*) FROM source_corrections WHERE from_patient_id = ?",
+                (patient_id,)).fetchone()[0]
         return {
             "source_records": len(rows),
             "source_held": sum(row["status"] == "held" for row in rows),
             "completed_transfers": transfer_counts.get("completed", 0),
             "held_transfers": transfer_counts.get("held", 0),
             "open_reports": open_reports,
+            "source_corrected": source_corrected,
         }
 
     def reset_activity(self) -> None:
-        """Reset demo actions without changing the fixed synthetic fixture."""
+        """Restore the fixed fixture and clear synthetic review activity."""
         with self._connect() as db:
             db.execute("DELETE FROM transfers")
             db.execute("DELETE FROM manual_reports")
+            for source_index in MISFILED_SOURCE_INDICES:
+                source = f"S{1000 + source_index}"
+                chart = f"S{1000 + (source_index + 1) % PATIENT_COUNT}"
+                db.execute(
+                    "UPDATE source_records SET chart_patient_id = ? WHERE record_key = ?",
+                    (chart, f"Observation/{source}-OBS1"),
+                )
+            db.execute("DELETE FROM source_corrections")
 
 
 __all__ = ["ClinicalRegistry", "PATIENT_COUNT", "DESTINATIONS"]
