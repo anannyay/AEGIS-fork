@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aegis_care.api.app import app, state
+from aegis_care.clinical_registry import ClinicalRegistry
 
 
 @pytest.fixture
@@ -46,6 +47,46 @@ class TestSystem:
     def test_static_assets_serve(self, client):
         assert client.get("/static/app.js").status_code == 200
         assert client.get("/static/styles.css").status_code == 200
+
+    def test_live_state_endpoints_cannot_be_browser_cached(self, client):
+        for path in ("/api/patients", "/api/cases", "/fhir/Patient/S1000"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.headers["cache-control"] == "no-store, max-age=0"
+
+    def test_clinician_total_is_not_labelled_as_held(self, client):
+        script = client.get("/static/app.js").text
+        assert 's.total, "total records"' in script
+        assert 's.total, "records held"' not in script
+        assert 'Complete memory history' in script
+
+    def test_nurse_workspace_exposes_plain_language_and_accessibility_controls(self, client):
+        page = client.get("/").text
+        script = client.get("/static/app.js").text
+
+        assert "Know what needs attention." in page
+        assert "Find a patient" in page
+        assert "Report a concern" in script
+        assert 'id="accessibility-dialog"' in page
+        assert 'id="pref-large-text"' in page
+        assert 'id="pref-high-contrast"' in page
+        assert 'id="pref-reduce-motion"' in page
+        assert "Demo access — not production authentication" in page
+        assert "Nurses cannot approve quarantined records" in script
+        assert 'if ($("role-gate").hidden) toggleChat(true);' not in script
+
+    def test_role_workspace_is_session_locked(self, client):
+        page = client.get("/").text
+        script = client.get("/static/app.js").text
+
+        assert "Four protected workspaces" in page
+        assert "Role-locked session" in page
+        assert 'id="session-dialog"' in page
+        assert 'id="confirm-end-session"' in page
+        assert 'sessionStorage.setItem(ROLE_KEY, id)' in script
+        assert 'localStorage.setItem(ROLE_KEY, id)' not in script
+        assert "This session is locked to" in script
+        assert "selectRole(ui.role)" not in script
 
 
 class TestFHIREndpoints:
@@ -153,6 +194,21 @@ class TestBaselinesEndpoint:
         assert len(results) == 9
         assert results["I"]["rwh"] <= results["A"]["rwh"]
         assert results["I"]["bsr"] > results["C"]["bsr"]
+
+    def test_baselines_do_not_rewind_the_live_clinician_workspace(self, client, incident):
+        client.post("/api/recover", json={"incident_id": incident["incident_id"]})
+        before = client.get("/api/patients").json()
+        assert before["count"] > 0
+
+        response = client.post("/api/baselines", json={
+            "incident_id": incident["incident_id"],
+            "conditions": ["A", "C", "I"],
+        })
+        assert response.status_code == 200, response.text
+
+        after = client.get("/api/patients").json()
+        assert after == before, (
+            "counterfactual baselines must not replace live post-recovery patient state")
 
 
 class TestMemoryEndpoints:
@@ -323,3 +379,78 @@ class TestPatientView:
             pytest.skip("this incident left no withdrawn-only patient")
         assert withdrawn_only[0]["status"] == "withdrawn"
         assert "removed" in withdrawn_only[0]["headline"].lower()
+
+
+class TestClinicalRegistry:
+    def test_fixed_patients_and_automatic_scan(self, client):
+        body = client.get("/api/patients", params={"only_with_memory": False}).json()
+        assert body["count"] == 160
+        assert all(row["source_records"] > 0 for row in body["patients"])
+        flagged = [row for row in body["patients"] if row["source_held"]]
+        assert len(flagged) == 6
+        patient = flagged[0]["token"]
+        detail = client.get(f"/api/patients/{patient}/record").json()
+        assert any("identity mismatch" in issue.lower()
+                   for record in detail["source_records"]
+                   for issue in record["issues"])
+
+    def test_safe_and_unsafe_transfers_are_recorded_without_moving_source(self, client):
+        patient_id = "S1000"
+        detail = client.get(f"/api/patients/{patient_id}/record").json()
+        record = next(r for r in detail["source_records"]
+                      if r["status"] == "available" and not r["restricted"])
+        safe = client.post("/api/registry/transfers", json={
+            "record_key": record["record_key"], "target_patient_id": patient_id,
+            "destination": "Ward A",
+        }).json()
+        assert safe["status"] == "completed"
+        held = client.post("/api/registry/transfers", json={
+            "record_key": record["record_key"], "target_patient_id": "S1001",
+            "destination": "ICU",
+        }).json()
+        assert held["status"] == "held"
+        assert "Target patient differs" in held["explanation"]
+        after = client.get(f"/api/patients/{patient_id}/record").json()
+        assert {r["record_key"] for r in after["source_records"]} == \
+               {r["record_key"] for r in detail["source_records"]}
+        assert after["source_summary"]["completed_transfers"] == 1
+        assert after["source_summary"]["held_transfers"] == 1
+        # The transfer log survives a new connection / registry object.
+        assert ClinicalRegistry(state.registry.path).summary(patient_id)["held_transfers"] == 1
+
+    def test_manual_fallback_holds_record_and_reset_keeps_fixture(self, client):
+        record = client.get("/api/patients/S1000/record").json()["source_records"][0]
+        response = client.post("/api/registry/reports", json={
+            "patient_id": "S1000", "record_key": record["record_key"],
+            "description": "The observation appears to have an incorrect source.",
+        })
+        assert response.status_code == 200, response.text
+        detail = client.get("/api/patients/S1000/record").json()
+        assert detail["source_summary"]["open_reports"] == 1
+        assert next(r for r in detail["source_records"]
+                    if r["record_key"] == record["record_key"])["status"] == "held"
+        client.post("/api/system/reset")
+        reset = client.get("/api/patients/S1000/record").json()
+        assert reset["source_summary"]["open_reports"] == 0
+        assert reset["source_summary"]["source_records"] > 0
+
+    def test_manual_concern_appears_in_review_queue_and_can_be_dismissed(self, client):
+        record = client.get("/api/patients/S1000/record").json()["source_records"][0]
+        created = client.post("/api/registry/reports", json={
+            "patient_id": "S1000", "record_key": record["record_key"],
+            "description": "The source observation appears duplicated.",
+        }).json()
+        queue = client.get("/api/review/queue").json()
+        assert any(item.get("report_id") == created["id"]
+                   for item in queue["registry_items"])
+        dismissed = client.post(f"/api/registry/reports/{created['id']}/dismiss",
+                                json={"note": "Checked the source chart; this is valid."})
+        assert dismissed.status_code == 200
+        assert client.get("/api/patients/S1000/record").json()["source_summary"]["open_reports"] == 0
+
+    def test_restricted_value_is_not_exposed_to_clinician_record_view(self, client):
+        records = client.get("/api/patients/S1000/record").json()["source_records"]
+        restricted = [row for row in records if row["restricted"]]
+        assert restricted
+        assert all(row["value"] is None and row["label"] == "Restricted clinical record"
+                   for row in restricted)

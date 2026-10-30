@@ -16,6 +16,8 @@ venv/
 
 # Local databases and scratch data
 data/
+tmp/
+poster_build/
 *.sqlite
 *.db
 

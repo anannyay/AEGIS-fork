@@ -18,6 +18,9 @@ const STATE = {
   role: null,
   patients: [],
   selectedPatient: null,
+  patientPanel: "summary",
+  patientListFilter: "attention",
+  patientFlash: null,
   commandIncident: null,
   commandRecovery: null,
   system: null,
@@ -33,6 +36,7 @@ const STATE = {
 async function api(path, opts) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
+    cache: "no-store",
     ...opts,
   });
   if (!res.ok) {
@@ -213,9 +217,9 @@ const VOCAB = {
   },
 };
 
-const ROLE_KEY = "aegis-role";
+const ROLE_KEY = "aegis-role-session-v2";
 function storedRole() {
-  try { const r = localStorage.getItem(ROLE_KEY); return ROLES[r] ? r : null; }
+  try { const r = sessionStorage.getItem(ROLE_KEY); return ROLES[r] ? r : null; }
   catch (e) { return null; }
 }
 function currentRole() { return STATE.role || "researcher"; }
@@ -315,39 +319,97 @@ function initTabs() {
 }
 
 /* ---------------- role gate & switcher ---------------- */
+let pendingRole = null;
+
 function renderRoleGate() {
   const grid = $("role-gate-grid");
   grid.innerHTML = "";
+
+  const choose = (id) => {
+    pendingRole = id;
+    const selected = ROLES[id];
+    grid.querySelectorAll(".role-card").forEach((node) => {
+      const active = node.dataset.role === id;
+      node.setAttribute("aria-checked", active ? "true" : "false");
+      node.tabIndex = active ? 0 : -1;
+    });
+    $("gate-confirm-copy").innerHTML =
+      `<h2>${esc(selected.label)}</h2>
+       <p>${esc(selected.blurb)}</p>
+       <ul>${selected.duties.map((d) => `<li>${esc(d)}</li>`).join("")}</ul>`;
+    const go = $("gate-continue");
+    go.disabled = false;
+    go.textContent = `Continue as ${selected.short}`;
+  };
+
   Object.entries(ROLES).forEach(([id, r]) => {
     const card = el("button", `role-card accent-${r.accent}`);
     card.type = "button";
     card.dataset.role = id;
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", "false");
+    card.tabIndex = id === "clinician" ? 0 : -1;
     card.innerHTML =
       `<span class="role-card-avatar" aria-hidden="true">${esc(r.initials)}</span>
+       ${id === "clinician" ? '<span class="role-card-recommended">Care team workspace</span>' : ""}
        <span class="role-card-label">${esc(r.label)}</span>
        <span class="role-card-question">${esc(r.question)}</span>
        <span class="role-card-blurb">${esc(r.blurb)}</span>
        <span class="role-card-duties">${r.duties.map((d) =>
          `<i>${esc(d)}</i>`).join("")}</span>
-       <span class="role-card-go">Continue <b aria-hidden="true">→</b></span>`;
-    card.addEventListener("click", () => selectRole(id, { firstRun: true }));
+       <span class="role-card-go">Select this workspace <b aria-hidden="true">→</b></span>`;
+    card.addEventListener("click", () => choose(id));
     grid.appendChild(card);
   });
+
+  grid.addEventListener("keydown", (e) => {
+    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const cards = Array.from(grid.querySelectorAll(".role-card"));
+    const at = Math.max(0, cards.indexOf(document.activeElement));
+    let next = at;
+    if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = cards.length - 1;
+    else next = (at + (["ArrowRight", "ArrowDown"].includes(e.key) ? 1 : -1) + cards.length) % cards.length;
+    e.preventDefault();
+    choose(cards[next].dataset.role);
+    cards[next].focus();
+  });
+
+  $("gate-continue").addEventListener("click", () => {
+    if (pendingRole) selectRole(pendingRole, { firstRun: true });
+  });
+}
+
+function resetRoleGate() {
+  pendingRole = null;
+  $("role-gate-grid").querySelectorAll(".role-card").forEach((card, index) => {
+    card.setAttribute("aria-checked", "false");
+    card.tabIndex = index === 0 ? 0 : -1;
+  });
+  $("gate-confirm-copy").innerHTML =
+    "<h2>Select a role to continue</h2><p>We will explain what you can see and what actions you can take.</p>";
+  $("gate-continue").disabled = true;
+  $("gate-continue").textContent = "Continue to workspace";
 }
 
 function renderRoleMenu() {
   const menu = $("role-menu");
-  menu.innerHTML = "";
-  Object.entries(ROLES).forEach(([id, r]) => {
-    const item = el("button", `role-menu-item${id === currentRole() ? " is-current" : ""}`);
-    item.type = "button";
-    item.setAttribute("role", "option");
-    item.setAttribute("aria-selected", id === currentRole() ? "true" : "false");
-    item.innerHTML =
-      `<span class="role-menu-avatar" aria-hidden="true">${esc(r.initials)}</span>
-       <span><strong>${esc(r.label)}</strong><small>${esc(r.question)}</small></span>`;
-    item.addEventListener("click", () => { closeRoleMenu(); selectRole(id); });
-    menu.appendChild(item);
+  const current = role();
+  menu.innerHTML =
+    `<div class="role-menu-session">
+       <span>Current protected workspace</span>
+       <strong>${esc(current.label)}</strong>
+       <div class="role-menu-lock">Role locked for this session</div>
+     </div>
+     <button class="role-menu-item role-menu-end" id="end-session-button" type="button" role="menuitem">
+       <span class="role-menu-avatar" aria-hidden="true">↩</span>
+       <span><strong>End session</strong><small>Return to login before choosing another role</small></span>
+     </button>`;
+  $("end-session-button").addEventListener("click", () => {
+    closeRoleMenu();
+    $("session-dialog-copy").textContent =
+      `You are leaving the ${current.label} workspace. You will return to role login; patient and incident data will not be reset.`;
+    $("session-dialog").showModal();
   });
 }
 
@@ -363,8 +425,14 @@ function closeRoleMenu() {
 
 function selectRole(id, { firstRun = false } = {}) {
   if (!ROLES[id]) return;
+  if (STATE.role && STATE.role !== id && $("role-gate").hidden) {
+    toast("Workspace is role-locked", {
+      detail: "End the current session before choosing another role.", kind: "bad",
+    });
+    return;
+  }
   STATE.role = id;
-  try { localStorage.setItem(ROLE_KEY, id); } catch (e) { /* storage blocked */ }
+  try { sessionStorage.setItem(ROLE_KEY, id); } catch (e) { /* storage blocked */ }
   document.documentElement.dataset.role = id;
 
   const r = ROLES[id];
@@ -380,12 +448,39 @@ function selectRole(id, { firstRun = false } = {}) {
   if (document.getElementById("chat-suggestions")) renderSuggestions();
   if (document.getElementById("operator-context-title")) updateOperatorContext();
   if (document.getElementById("operator-case-list")) loadOperatorCases();
+  if ($("assistant-title")) {
+    $("assistant-title").textContent = id === "clinician" ? "AEGIS Guide" : "AEGIS Operator";
+    $("chat-toggle-label").textContent = id === "clinician" ? "Ask AEGIS" : "Operator";
+  }
+  if (CHAT.initialized) {
+    renderAssistantWelcome();
+    primeChat();
+  }
   if (firstRun) {
     startTour(id);
-    // The operator is the primary way into a role workflow, so introduce it
-    // alongside the console rather than leaving it behind a floating button.
-    window.setTimeout(() => toggleChat(true), 120);
   }
+}
+
+function endRoleSession() {
+  const previous = role().label;
+  if (CHAT.initialized) toggleChat(false);
+  endTour();
+  closeRoleMenu();
+  try {
+    sessionStorage.removeItem(ROLE_KEY);
+    sessionStorage.removeItem("aegis-operator-session");
+  } catch (e) { /* storage blocked */ }
+  CHAT.sessionId = assistantSessionId();
+  CHAT.history = [];
+  CHAT.lastResult = null;
+  STATE.role = null;
+  delete document.documentElement.dataset.role;
+  $("tabs").innerHTML = "";
+  $("tabs").hidden = true;
+  resetRoleGate();
+  $("role-gate").hidden = false;
+  window.setTimeout(() => $("role-gate-grid").querySelector(".role-card")?.focus(), 80);
+  $("urgent-announcer").textContent = `${previous} session ended. Choose a role to begin a new protected session.`;
 }
 
 function initRoles() {
@@ -398,6 +493,7 @@ function initRoles() {
     if (!e.target.closest("#role-menu") && !e.target.closest("#role-switch")) closeRoleMenu();
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRoleMenu(); });
+  $("confirm-end-session").addEventListener("click", endRoleSession);
 
   const saved = storedRole();
   if (saved) {
@@ -414,6 +510,62 @@ function renderRoleSurface() {
   if (id === "clinician") loadPatients();
   if (id === "safety") initCommandView();
   if (id === "compliance") initAssuranceView();
+}
+
+/* ---------------- accessible display preferences & persistent help ---------------- */
+const DISPLAY_KEY = "aegis-display";
+
+function readDisplayPreferences() {
+  try { return JSON.parse(localStorage.getItem(DISPLAY_KEY) || "{}"); }
+  catch (e) { return {}; }
+}
+
+function applyDisplayPreferences(next) {
+  document.documentElement.dataset.textSize = next.textSize === "large" ? "large" : "normal";
+  document.documentElement.dataset.contrast = next.contrast === "high" ? "high" : "normal";
+  document.documentElement.dataset.motion = next.motion === "reduce" ? "reduce" : "normal";
+  try { localStorage.setItem(DISPLAY_KEY, JSON.stringify(next)); } catch (e) { /* storage blocked */ }
+  $("pref-large-text").checked = next.textSize === "large";
+  $("pref-high-contrast").checked = next.contrast === "high";
+  $("pref-reduce-motion").checked = next.motion === "reduce";
+}
+
+function openAccessibility() {
+  const dialog = $("accessibility-dialog");
+  applyDisplayPreferences(readDisplayPreferences());
+  if (!dialog.open) dialog.showModal();
+}
+
+function initAccessibility() {
+  applyDisplayPreferences(readDisplayPreferences());
+  $("accessibility-button").addEventListener("click", openAccessibility);
+  $("gate-accessibility").addEventListener("click", openAccessibility);
+  [["pref-large-text", "textSize", "large"],
+   ["pref-high-contrast", "contrast", "high"],
+   ["pref-reduce-motion", "motion", "reduce"]].forEach(([control, key, enabled]) => {
+    $(control).addEventListener("change", (e) => {
+      const prefs = readDisplayPreferences();
+      prefs[key] = e.target.checked ? enabled : "normal";
+      applyDisplayPreferences(prefs);
+      $("urgent-announcer").textContent = `${e.target.closest("label").querySelector("strong").textContent} ${e.target.checked ? "on" : "off"}`;
+    });
+  });
+  $("preferences-reset").addEventListener("click", () => {
+    applyDisplayPreferences({ textSize: "normal", contrast: "normal", motion: "normal" });
+    $("urgent-announcer").textContent = "Display settings reset";
+  });
+}
+
+function initPersistentHelp() {
+  $("help-button").addEventListener("click", () => {
+    if (!$("role-gate").hidden) {
+      $("role-gate-grid").querySelector(".role-card")?.focus();
+      $("urgent-announcer").textContent = "Choose your role, then confirm your workspace.";
+      return;
+    }
+    startTour(currentRole(), { force: true });
+  });
+  $("records-guide").addEventListener("click", () => startTour("clinician", { force: true }));
 }
 
 /* ---------------- table helper ---------------- */
@@ -455,6 +607,8 @@ async function boot() {
   initTheme();
   initTabs();
   initTour();
+  initAccessibility();
+  initPersistentHelp();
   const health = await api("/api/health");
   $("version").textContent = `v${health.version} · ${health.model}`;
   STATE.system = await api("/api/system");
@@ -917,6 +1071,8 @@ $("btn-reset").addEventListener("click", async () => {
     STATE.lastRecovery = null;
     $("btn-quick-recover").disabled = true;
     await refreshIncidents();
+    resetOperatorConversation("Workspace reset. Previous answers no longer describe the live sandbox.");
+    if (currentRole() === "clinician") await loadPatients(null);
     toast("System reset", { detail: "Environment rebuilt; all incidents cleared." });
   } catch (e) {
     toast("Reset failed", { detail: e.message, kind: "bad" });
@@ -1675,33 +1831,78 @@ const STATUS_COPY = {
   clear: { label: "No issues", icon: "✓", tone: "muted" },
 };
 
-async function loadPatients() {
+let patientLoadSequence = 0;
+let patientSearchReady = false;
+
+async function loadPatients(preferredToken = STATE.selectedPatient) {
+  const requestSequence = ++patientLoadSequence;
   const list = $("records-list");
   list.innerHTML = '<div class="loading-row"><span class="spinner"></span>Loading patients…</div>';
   try {
-    const data = await api("/api/patients");
+    const data = await api("/api/patients?only_with_memory=false");
+    // Role changes and assistant navigation can start overlapping refreshes.
+    // Only the newest response may paint the clinician console.
+    if (requestSequence !== patientLoadSequence) return;
     STATE.patients = data.patients;
+    if (!patientSearchReady) {
+      $("records-search").addEventListener("input", renderPatientList);
+      $("records-search").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const first = $("records-list").querySelector(".patient-row");
+        if (first) { event.preventDefault(); first.click(); }
+      });
+      $("records-filter-attention").addEventListener("click", () => setPatientFilter("attention"));
+      $("records-filter-all").addEventListener("click", () => setPatientFilter("all"));
+      patientSearchReady = true;
+    }
     renderPatientRollup();
+    const requestedRow = STATE.patients.find((p) => p.token === preferredToken);
+    if (requestedRow && requestedRow.status !== "attention" &&
+        STATE.patientListFilter === "attention" && !$("records-search").value.trim()) {
+      STATE.patientListFilter = "all";
+      $("records-filter-attention").setAttribute("aria-pressed", "false");
+      $("records-filter-all").setAttribute("aria-pressed", "true");
+    }
     renderPatientList();
-    const keep = STATE.selectedPatient
-      && STATE.patients.some((p) => p.token === STATE.selectedPatient);
-    selectPatient(keep ? STATE.selectedPatient : (STATE.patients[0]?.token ?? null));
+    const requestedExists = preferredToken
+      && STATE.patients.some((p) => p.token === preferredToken);
+    if (preferredToken && !requestedExists) {
+      STATE.selectedPatient = null;
+      $("records-detail").innerHTML =
+        '<div class="notice warn"><b>That patient is not in the current workspace.</b> ' +
+        'The list was refreshed and no different patient was opened.</div>';
+      return;
+    }
+    const firstAttention = STATE.patients.find((p) => p.status === "attention");
+    await selectPatient(requestedExists
+      ? preferredToken : (firstAttention?.token ?? STATE.patients[0]?.token ?? null));
   } catch (e) {
+    if (requestSequence !== patientLoadSequence) return;
     list.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
+}
+
+function setPatientFilter(filter) {
+  STATE.patientListFilter = filter;
+  $("records-search").value = "";
+  $("records-filter-attention").setAttribute("aria-pressed", filter === "attention" ? "true" : "false");
+  $("records-filter-all").setAttribute("aria-pressed", filter === "all" ? "true" : "false");
+  renderPatientList();
+  const visible = $("records-list").querySelector(`.patient-row[data-token="${STATE.selectedPatient}"]`);
+  if (!visible) $("records-list").querySelector(".patient-row")?.click();
 }
 
 function renderPatientRollup() {
   const counts = { attention: 0, checking: 0, corrected: 0, withdrawn: 0, clear: 0 };
   STATE.patients.forEach((p) => { counts[p.status] = (counts[p.status] || 0) + 1; });
   const needsYou = counts.attention;
+  const sourceTotal = STATE.patients.reduce((sum, p) => sum + (p.source_records || 0), 0);
   $("records-rollup").innerHTML =
     `<div class="rollup ${needsYou ? "is-alert" : "is-calm"}">
        <div class="rollup-figure">${needsYou}</div>
        <div class="rollup-copy">
-         <strong>${needsYou ? "need your attention" : "nothing needs you"}</strong>
-         <span>${counts.corrected} corrected · ${counts.withdrawn} with entries removed ·
-           ${counts.clear} with no issues</span>
+         <strong>${needsYou ? `${needsYou} patient${needsYou === 1 ? "" : "s"} need a record check` : "No detected record mismatch"}</strong>
+         <span>${STATE.patients.length} synthetic patients · ${sourceTotal} source records · ${counts.corrected} with corrected assistant memory</span>
        </div>
      </div>`;
 }
@@ -1712,18 +1913,33 @@ function renderPatientList() {
   if (!STATE.patients.length) {
     list.innerHTML =
       `<div class="empty-teach">
-         <strong>No patient records yet.</strong>
-         <span>The assistant has not stored anything about a patient in this session.
-           A safety officer creates activity from Incident Command.</span>
+         <strong>No patients are available.</strong>
+         <span>Refresh the workspace or ask an administrator to check the synthetic registry.</span>
        </div>`;
     $("records-detail").innerHTML = "";
     return;
   }
-  STATE.patients.forEach((p) => {
+  const query = $("records-search").value.trim().toLowerCase();
+  const matching = STATE.patients.filter((p) =>
+    query ? [p.patient.name, p.patient.id, p.patient.mrn].some((v) =>
+      String(v || "").toLowerCase().includes(query)) :
+      STATE.patientListFilter === "all" || p.status === "attention");
+  $("records-match-count").textContent = query
+    ? `${matching.length} matching patients`
+    : `${matching.length} ${STATE.patientListFilter === "attention" ? "need review" : "patients"}`;
+  if (!matching.length) {
+    list.innerHTML = query
+      ? '<div class="empty-teach"><strong>No matching patient.</strong><span>Try a name, synthetic ID, or MRN.</span></div>'
+      : '<div class="empty-teach"><strong>No one needs review.</strong><span>Choose All patients to browse the registry.</span></div>';
+    return;
+  }
+  matching.forEach((p) => {
     const s = STATUS_COPY[p.status];
     const row = el("button", `patient-row tone-${s.tone}`);
     row.type = "button";
     row.dataset.token = p.token;
+    row.setAttribute("aria-label", `${p.patient.name}, MRN ${p.patient.mrn ?? "unknown"}, ${p.headline}, ${p.source_records} source records, ${p.records} assistant memory entries`);
+    row.setAttribute("aria-pressed", p.token === STATE.selectedPatient ? "true" : "false");
     row.innerHTML =
       `<span class="patient-flag" aria-hidden="true">${esc(s.icon)}</span>
        <span class="patient-main">
@@ -1732,22 +1948,42 @@ function renderPatientList() {
        </span>
        <span class="patient-state">
          <span class="patient-headline">${esc(p.headline)}</span>
-         <small>${p.records} record${p.records === 1 ? "" : "s"}</small>
+         <small>${p.source_records} source · ${p.records} assistant notes</small>
        </span>`;
-    row.addEventListener("click", () => selectPatient(p.token));
+    row.addEventListener("click", () => selectPatient(p.token, { reveal: true }));
     list.appendChild(row);
   });
 }
 
-async function selectPatient(token) {
+async function selectPatient(token, { reveal = false } = {}) {
+  if (token !== STATE.selectedPatient) {
+    STATE.patientPanel = "summary";
+    STATE.patientFlash = null;
+  }
   STATE.selectedPatient = token;
-  document.querySelectorAll(".patient-row").forEach((r) =>
-    r.classList.toggle("is-selected", r.dataset.token === token));
+  document.querySelectorAll(".patient-row").forEach((r) => {
+    const selected = r.dataset.token === token;
+    r.classList.toggle("is-selected", selected);
+    r.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
   const out = $("records-detail");
   if (!token) { out.innerHTML = ""; return; }
   out.innerHTML = '<div class="loading-row"><span class="spinner"></span>Opening record…</div>';
   try {
-    renderPatientRecord(await api(`/api/patients/${encodeURIComponent(token)}/record`), out);
+    const data = await api(`/api/patients/${encodeURIComponent(token)}/record`);
+    renderPatientRecord(data, out);
+    if (reveal && window.matchMedia("(max-width: 1050px)").matches) {
+      out.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
+    }
+    $("urgent-announcer").textContent = `${data.patient.name} record opened. ${
+      (data.summary.held + data.source_summary.source_held) ?
+      `${data.summary.held + data.source_summary.source_held} item${
+        data.summary.held + data.source_summary.source_held === 1 ? "" : "s"} need${
+        data.summary.held + data.source_summary.source_held === 1 ? "s" : ""} review.` :
+      "Read the safety status and next action."}`;
   } catch (e) {
     out.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
@@ -1756,15 +1992,25 @@ async function selectPatient(token) {
 function renderPatientRecord(data, out) {
   const p = data.patient;
   const s = data.summary;
+  const ss = data.source_summary;
   out.innerHTML = "";
 
   // A plain-language verdict first. Everything else is supporting detail.
   let verdict, tone, advice;
   const live = s.in_use;
-  if (s.held) {
-    verdict = `${s.held} record${s.held === 1 ? " is" : "s are"} held for review`;
+  if (s.held || ss.source_held || ss.held_transfers || ss.open_reports) {
+    const heldCount = s.held + ss.source_held;
+    verdict = heldCount
+      ? `${heldCount} record${heldCount === 1 ? "" : "s"} held for review`
+      : "A handover or reported concern needs review";
     tone = "bad";
-    advice = "Do not rely on the held items. A reviewer must approve them first.";
+    const pending = [];
+    if (ss.held_transfers) pending.push(`${ss.held_transfers} handover${ss.held_transfers === 1 ? "" : "s"} blocked`);
+    if (ss.open_reports) pending.push(`${ss.open_reports} reported concern${ss.open_reports === 1 ? "" : "s"} open`);
+    advice = heldCount
+      ? "Keep held information out of handovers until a reviewer checks the source chart."
+      : "A handover or reported concern is awaiting review.";
+    if (pending.length) advice += ` ${pending.join(" · ")}.`;
   } else if (s.corrected) {
     verdict = `${s.corrected} record${s.corrected === 1 ? " was" : "s were"} corrected`;
     tone = "good";
@@ -1776,9 +2022,9 @@ function renderPatientRecord(data, out) {
       + "withdrawn. Nothing here is in active use. If you acted on them earlier, "
       + "re-check against the source record.";
   } else {
-    verdict = "No issues found in this patient's records";
+    verdict = "No record mismatch detected";
     tone = "muted";
-    advice = "Nothing about this patient was affected.";
+    advice = "The automatic check covers patient identity and source status. It does not judge symptoms or clinical meaning.";
   }
 
   const head = el("div", "record-head");
@@ -1794,27 +2040,246 @@ function renderPatientRecord(data, out) {
      <div class="record-verdict tone-${tone}">
        <strong>${esc(verdict)}</strong>
        <span>${esc(advice)}</span>
-     </div>`;
+     </div>
+     <button class="back-to-patients" type="button">← Back to patient list</button>`;
   out.appendChild(head);
+  head.querySelector(".back-to-patients").addEventListener("click", () => {
+    $("records-search").scrollIntoView({ block: "start" });
+    $("records-search").focus({ preventScroll: true });
+  });
+
+  const needsReview = s.held || ss.source_held || ss.held_transfers || ss.open_reports;
+  const tabNames = [
+    ["summary", "Summary"], ["records", `Records (${ss.source_records})`],
+    ["handover", "Handover"], ["report", "Report a concern"],
+  ];
+  const tabs = el("div", "patient-task-tabs");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", `${p.name} actions`);
+  const panels = {};
+  tabNames.forEach(([id, title]) => {
+    const button = el("button", "patient-task-tab", esc(title));
+    button.type = "button";
+    button.id = `patient-tab-${id}`;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", `patient-panel-${id}`);
+    button.dataset.patientPanel = id;
+    tabs.appendChild(button);
+    const panel = el("section", "patient-task-panel");
+    panel.id = `patient-panel-${id}`;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", button.id);
+    panel.tabIndex = -1;
+    panels[id] = panel;
+  });
+  out.appendChild(tabs);
+  Object.values(panels).forEach((panel) => out.appendChild(panel));
+  const showPanel = (name, focus = false) => {
+    STATE.patientPanel = name;
+    tabs.querySelectorAll("button").forEach((button) => {
+      const active = button.dataset.patientPanel === name;
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
+    });
+    Object.entries(panels).forEach(([id, panel]) => { panel.hidden = id !== name; });
+    if (focus) panels[name].focus();
+  };
+  tabs.querySelectorAll("button").forEach((button) => button.addEventListener("click", () =>
+    showPanel(button.dataset.patientPanel, true)));
+  tabs.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = [...tabs.querySelectorAll("button")];
+    const index = buttons.findIndex((button) => button.getAttribute("aria-selected") === "true");
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
+      (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+    showPanel(buttons[next].dataset.patientPanel);
+    buttons[next].focus();
+  });
+
+  const next = el("section", `record-next-step ${needsReview ? "is-alert" : "is-safe"}`);
+  next.innerHTML = `<div class="record-next-copy">
+      <strong>${needsReview ? "What to do now" : "Ready for the next task"}</strong>
+      <span>${needsReview
+        ? "Open Records to see the flagged items. Keep held information out of use and ask a reviewer to verify the source chart. Nurses cannot approve quarantined records."
+        : "The identity and source-status checks found no mismatch. You can review records, prepare a handover, or raise a concern."}</span>
+    </div><div class="patient-primary-actions">
+      <button class="btn" type="button" data-go="records">${needsReview ? "Review flagged records" : "View records"}</button>
+      <button class="btn outline" type="button" data-go="handover">Start a handover</button>
+      <button class="btn ghost" type="button" data-go="report">Report a concern</button>
+    </div>`;
+  next.querySelectorAll("button[data-go]").forEach((button) => button.addEventListener("click", () =>
+    showPanel(button.dataset.go, true)));
+  panels.summary.appendChild(next);
+
+  const sourceStats = el("div", "record-stats");
+  [[ss.source_records, "source records"], [ss.source_held, "source records held"],
+   [ss.completed_transfers, "handovers completed"], [ss.held_transfers, "handovers blocked"]]
+    .forEach(([value, label]) => sourceStats.appendChild(el("div", "record-stat",
+      `<b>${esc(value)}</b><span>${esc(label)}</span>`)));
+  panels.summary.appendChild(sourceStats);
+
+  const flagged = data.source_records.filter((r) => r.status === "held");
+  if (flagged.length || ss.open_reports || ss.held_transfers) {
+    panels.summary.appendChild(el("h4", "record-section", "Why this needs attention"));
+    const issues = el("div", "patient-issue-list");
+    flagged.slice(0, 4).forEach((r) => issues.appendChild(el("div", "patient-issue",
+      `<b>${esc(r.label)}</b><span>${esc(r.issues.join(" "))}</span>`)));
+    if (ss.open_reports) issues.appendChild(el("div", "patient-issue",
+      `<b>${ss.open_reports} open manual concern${ss.open_reports === 1 ? "" : "s"}</b><span>A person noticed something the automated check cannot judge.</span>`));
+    if (ss.held_transfers) issues.appendChild(el("div", "patient-issue",
+      `<b>${ss.held_transfers} blocked handover${ss.held_transfers === 1 ? "" : "s"}</b><span>No mismatched record was moved to another chart.</span>`));
+    panels.summary.appendChild(issues);
+  }
+  panels.summary.appendChild(el("p", "patient-scope-note",
+    "AEGIS checks identity and source status. It cannot decide whether a symptom or diagnosis is clinically correct."));
+  const summaryTools = el("div", "patient-summary-tools");
+  summaryTools.innerHTML = '<button class="btn ghost small" type="button" data-tool="ask">Ask AEGIS to explain</button><button class="btn ghost small" type="button" data-tool="print">Print summary</button>';
+  summaryTools.querySelector('[data-tool="ask"]').addEventListener("click", () => {
+    toggleChat(true);
+    sendChat(`What should I do next for patient ${p.id}?`);
+  });
+  summaryTools.querySelector('[data-tool="print"]').addEventListener("click", () => window.print());
+  panels.summary.appendChild(summaryTools);
+
+  panels.records.appendChild(el("h4", "record-section", "Source records"));
+  panels.records.appendChild(el("p", "hint", "Held records appear first. Select a record to prepare a handover or report a concern."));
+  const sourceWrap = el("div", "source-record-list");
+  [...data.source_records].sort((a, b) =>
+    (a.status === "held" ? 0 : 1) - (b.status === "held" ? 0 : 1))
+    .forEach((r) => {
+    const card = el("div", `source-record ${r.status === "held" ? "is-held" : ""}`);
+    const value = r.restricted ? "Restricted value" :
+      r.value == null ? "" : `${r.value} ${r.unit || ""}`;
+    card.innerHTML = `<div><strong>${esc(r.label)}</strong><small>${esc(r.resource_type)} · ${esc(r.record_key)}</small></div>
+      <div class="source-record-state"><b>${r.status === "held" ? "Held" : "Available"}</b><span>${esc(value)}</span></div>
+      ${r.issues.length ? `<p>${r.issues.map(esc).join(" ")}</p>` : ""}`;
+    const actions = el("div", "source-record-actions");
+    const handover = el("button", "btn ghost small", "Prepare handover");
+    handover.type = "button";
+    handover.addEventListener("click", () => {
+      transferForm.elements.record_key.value = r.record_key;
+      showPanel("handover", true);
+    });
+    const report = el("button", "btn ghost small", "Report concern");
+    report.type = "button";
+    report.addEventListener("click", () => {
+      reportForm.elements.record_key.value = r.record_key;
+      showPanel("report", true);
+    });
+    actions.append(handover, report);
+    card.appendChild(actions);
+    sourceWrap.appendChild(card);
+  });
+  panels.records.appendChild(sourceWrap);
+
+  panels.handover.appendChild(el("div", "patient-panel-intro",
+    "<h4>Prepare a handover</h4><p>Choose a source record and a destination. AEGIS checks the patient link before recording the transfer.</p>"));
+  const transferForm = el("form", "registry-form patient-form");
+  transferForm.id = "transfer-form";
+  transferForm.innerHTML = `<label>Record to hand over<select name="record_key" required></select></label>
+    <div class="receiving-chart"><span>Receiving chart</span><strong>${esc(p.name)}</strong><small>MRN ${esc(p.mrn)} · ${esc(p.id)}</small></div>
+    <label>Destination<select name="destination" required></select></label>
+    <details class="demo-mismatch"><summary>Demo: choose a different patient chart</summary>
+      <p>This intentionally tests a wrong-patient transfer. AEGIS should hold it.</p>
+      <label>Other patient<select name="alternate_patient"></select></label>
+    </details>
+    <button class="btn" type="submit">Check and hand over</button>
+    <div class="form-result" aria-live="polite"></div>`;
+  panels.handover.appendChild(transferForm);
+
+  panels.report.appendChild(el("div", "patient-panel-intro",
+    "<h4>Report what you noticed</h4><p>Use this when identity checks cannot determine whether a record is correct. Your concern holds the selected record for review.</p>"));
+  const reportForm = el("form", "registry-form patient-form");
+  reportForm.id = "manual-report-form";
+  reportForm.innerHTML = `<label>Record<select name="record_key"><option value="">General patient concern</option></select></label>
+    <label>What concerns you?<textarea name="description" required minlength="10" maxlength="1000" placeholder="For example: the symptom was reported for another visit"></textarea></label>
+    <button class="btn outline" type="submit">Send for review</button>
+    <div class="form-result" aria-live="polite"></div>`;
+  panels.report.appendChild(reportForm);
+  const recordOptions = data.source_records.map((r) =>
+    new Option(`${r.label} · ${r.record_key}${r.status === "held" ? " · held" : ""}`, r.record_key));
+  recordOptions.forEach((o) => transferForm.elements.record_key.add(o));
+  const firstSafe = data.source_records.find((r) => r.status === "available" && !r.restricted);
+  if (firstSafe) transferForm.elements.record_key.value = firstSafe.record_key;
+  data.source_records.forEach((r) => reportForm.elements.record_key.add(
+    new Option(`${r.label} · ${r.record_key}`, r.record_key)));
+  STATE.patients.filter((row) => row.patient.id !== p.id).forEach((row) =>
+    transferForm.elements.alternate_patient.add(
+      new Option(`${row.patient.name} · ${row.patient.id}`, row.patient.id)));
+  data.transfer_destinations.forEach((d) => transferForm.elements.destination.add(new Option(d, d)));
+  transferForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = transferForm.querySelector(".form-result");
+    result.textContent = "Checking transfer…";
+    try {
+      const body = {
+        record_key: transferForm.elements.record_key.value,
+        target_patient_id: transferForm.querySelector(".demo-mismatch").open
+          ? transferForm.elements.alternate_patient.value : p.id,
+        destination: transferForm.elements.destination.value,
+      };
+      const response = await api("/api/registry/transfers", { method: "POST", body: JSON.stringify(body) });
+      const message = response.status === "held"
+        ? `Transfer held: ${response.explanation}` : "Handover completed and recorded.";
+      STATE.patientPanel = "handover";
+      STATE.patientFlash = { panel: "handover", patient: p.id, message,
+        tone: response.status === "held" ? "warn" : "good" };
+      $("urgent-announcer").textContent = message;
+      await loadPatients(p.id);
+    } catch (error) { result.textContent = error.message; }
+  });
+  reportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = reportForm.querySelector(".form-result");
+    result.textContent = "Submitting concern…";
+    try {
+      const body = { ...Object.fromEntries(new FormData(reportForm)), patient_id: p.id };
+      if (!body.record_key) body.record_key = null;
+      await api("/api/registry/reports", { method: "POST", body: JSON.stringify(body) });
+      const message = "Concern recorded. A reviewer can now see it in the queue.";
+      STATE.patientPanel = "report";
+      STATE.patientFlash = { panel: "report", patient: p.id, message, tone: "warn" };
+      $("urgent-announcer").textContent = message;
+      await loadPatients(p.id);
+    } catch (error) { result.textContent = error.message; }
+  });
+
+  if (data.transfers.length) {
+    panels.handover.appendChild(el("h4", "record-section", "Recent handovers"));
+    const history = el("div", "registry-history");
+    data.transfers.slice(0, 8).forEach((t) => history.appendChild(el("p", null,
+      `<b>${esc(t.status === "held" ? "Held" : "Completed")}</b> · ${esc(t.record_key)} → ${esc(t.destination)} / ${esc(t.target_patient_id)}<br><small>${esc(t.explanation)}</small>`)));
+    panels.handover.appendChild(history);
+  }
+  if (data.manual_reports.length) {
+    panels.report.appendChild(el("h4", "record-section", "Your recent concerns"));
+    const history = el("div", "registry-history");
+    data.manual_reports.slice(0, 8).forEach((r) => history.appendChild(el("p", null,
+      `<b>${esc(r.status === "open" ? "Awaiting review" : "Reviewed")}</b> · ${esc(r.description)}`)));
+    panels.report.appendChild(history);
+  }
+
+  panels.records.appendChild(el("h4", "record-section", "Assistant memory (separate from source records)"));
 
   const stats = el("div", "record-stats");
-  [[s.total, "records held"], [s.in_use, "in use now"],
+  [[s.total, "total records"], [s.in_use, "in use now"],
    [s.corrected, "corrected"], [s.withdrawn, "withdrawn"]]
     .forEach(([value, label]) => {
       stats.appendChild(el("div", "record-stat",
         `<b>${esc(value)}</b><span>${esc(label)}</span>`));
     });
-  out.appendChild(stats);
+  panels.records.appendChild(stats);
 
   if (data.changes.length) {
-    out.appendChild(el("h4", "record-section", "What changed"));
-    data.changes.forEach((c) => out.appendChild(renderChange(c)));
+    panels.records.appendChild(el("h4", "record-section", "What changed"));
+    data.changes.forEach((c) => panels.records.appendChild(renderChange(c)));
   }
 
   if (data.held_for_review.length) {
-    out.appendChild(el("h4", "record-section", "Held for review"));
+    panels.records.appendChild(el("h4", "record-section", "Held for review"));
     data.held_for_review.forEach((h) => {
-      out.appendChild(el("div", "held-card",
+      panels.records.appendChild(el("div", "held-card",
         `<strong>${esc(String(h.artifact_type).replace(/_/g, " "))}</strong>
          <p>${esc(h.quarantine_reason || "Could not be rebuilt safely.")}</p>
          <small>Do not rely on this item until a reviewer clears it.</small>`));
@@ -1822,7 +2287,7 @@ function renderPatientRecord(data, out) {
   }
 
   const det = el("details", "record-all");
-  det.appendChild(el("summary", null, `All records held about this patient (${data.records.length})`));
+  det.appendChild(el("summary", null, `Complete memory history (${data.records.length})`));
   det.appendChild(table(data.records, [
     { key: "artifact_type", label: "Record",
       render: (r) => esc(String(r.artifact_type).replace(/_/g, " ")) },
@@ -1831,7 +2296,14 @@ function renderPatientRecord(data, out) {
     { key: "servable", label: "In use", render: (r) => r.servable ? "yes" : "no" },
     { key: "version", label: "Version", num: true, render: (r) => `v${r.version}` },
   ]));
-  out.appendChild(det);
+  panels.records.appendChild(det);
+
+  if (STATE.patientFlash?.patient === p.id) {
+    const flash = STATE.patientFlash;
+    panels[flash.panel].prepend(el("div", `notice ${flash.tone}`, esc(flash.message)));
+    STATE.patientFlash = null;
+  }
+  showPanel(panels[STATE.patientPanel] ? STATE.patientPanel : "summary");
 }
 
 /* A real before/after, with the re-filing called out - that is the fact a
@@ -2151,13 +2623,14 @@ function showAssurancePanel(name) {
 async function renderAssuranceRollup() {
   try {
     const q = await api("/api/review/queue");
+    const total = q.total_count ?? q.count;
     const rec = STATE.lastRecovery;
     const exported = rec ? "none" : "—";
     $("assurance-rollup").innerHTML =
-      `<div class="rollup ${q.count ? "is-alert" : "is-calm"}">
-         <div class="rollup-figure">${q.count}</div>
+      `<div class="rollup ${total ? "is-alert" : "is-calm"}">
+         <div class="rollup-figure">${total}</div>
          <div class="rollup-copy">
-           <strong>${q.count === 1 ? "record needs a decision" : "records need a decision"}</strong>
+           <strong>${total === 1 ? "item needs review" : "items need review"}</strong>
            <span>Clinical content exported: ${esc(exported)}</span>
          </div>
        </div>`;
@@ -2247,7 +2720,7 @@ async function loadAssuranceQueue() {
   try {
     const r = await api("/api/review/queue");
     out.innerHTML = "";
-    if (!r.count) {
+    if (!(r.total_count ?? r.count)) {
       out.appendChild(el("div", "empty-teach",
         `<strong>Nothing is waiting on you.</strong>
          <span>The system only escalates a record when it cannot rebuild it safely.
@@ -2256,6 +2729,32 @@ async function loadAssuranceQueue() {
       renderAssuranceRollup();
       return;
     }
+    (r.registry_items || []).forEach((item) => {
+      const card = el("div", "queue-card");
+      card.innerHTML = `<div class="queue-head"><strong>${item.kind === "automatic" ? "Automatic identity check" : "Manual concern"}</strong><span class="mono muted">${esc(item.patient_id)}</span></div>
+        <div class="queue-reason"><span aria-hidden="true">!</span><span>${esc(item.description)}</span></div>
+        <div class="queue-actions"><span class="mono small muted">${esc(item.record_key || "Patient-wide concern")}</span></div>`;
+      if (item.kind === "manual") {
+        const form = el("form", "queue-actions registry-review-form");
+        form.innerHTML = `<label>Reason for dismissing after verification<textarea required minlength="10" maxlength="1000" placeholder="What source did you check?"></textarea></label><button class="btn small ghost" type="submit">Dismiss concern</button><span class="form-result" aria-live="polite"></span>`;
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const result = form.querySelector(".form-result");
+          try {
+            await api(`/api/registry/reports/${item.report_id}/dismiss`, {
+              method: "POST", body: JSON.stringify({ note: form.querySelector("textarea").value }),
+            });
+            result.textContent = "Review decision recorded.";
+            await loadAssuranceQueue();
+          } catch (error) { result.textContent = error.message; }
+        });
+        card.appendChild(form);
+      } else {
+        card.appendChild(el("p", "small muted queue-guidance",
+          "This check stays open until the source chart association is corrected."));
+      }
+      out.appendChild(card);
+    });
     r.items.forEach((item) => {
       const card = el("div", "queue-card");
       card.innerHTML =
@@ -2372,12 +2871,14 @@ async function loadAssuranceTrail() {
  */
 const TOURS = {
   clinician: [
-    ["#records-rollup", "Start here",
-     "This tells you immediately whether any of your patients need attention. If it reads zero, nothing about your patients was affected."],
-    ["#records-list", "Your patients",
-     "Anything needing attention is sorted to the top. The label on each row is the plain answer: corrected, being checked, or no issues."],
-    ["#records-detail", "What actually changed",
-     "Open a patient to see the old text beside the new one. If a record was filed under the wrong patient, that is called out explicitly."],
+    ["#records-rollup", "Start with the review count",
+     "This count tells you how many synthetic patient charts have a detected issue or a concern waiting for review."],
+    ["#records-search", "Find the right patient",
+     "Search by name, synthetic patient ID, or MRN. The Needs review filter keeps urgent charts at the top."],
+    ["#records-detail", "Read the status, then choose a task",
+     "Start with the short summary. Records, Handover, and Report a concern each have their own view."],
+    ["#chat-toggle", "Ask AEGIS when you are unsure",
+     "Ask for an explanation or the safest next step. AEGIS can guide you, but it cannot approve a held record for you."],
   ],
   safety: [
     ["#command-status", "Containment status",
@@ -2497,10 +2998,39 @@ function assistantSessionId() {
 const CHAT = {
   open: false,
   busy: false,
+  initialized: false,
   history: [],
   sessionId: assistantSessionId(),
   lastResult: null,
 };
+
+function renderAssistantWelcome() {
+  const clinician = currentRole() === "clinician";
+  $("chat-log").innerHTML =
+    `<div class="chat-msg is-bot"><div class="chat-bubble">${clinician
+      ? "Ask me to explain a patient status, show who needs attention, or tell you the safest next step. I cannot diagnose or approve a held record."
+      : "Tell me the situation or the outcome you need. I will inspect live state, propose the safest next action, and verify what changed."}</div>` +
+    `<div class="chat-meta">${clinician
+      ? "plain-language guide · grounded in current synthetic records"
+      : "deterministic tools · explicit approval · grounded results"}</div></div>`;
+  CHAT.history = [];
+  CHAT.lastResult = null;
+}
+
+function resetOperatorConversation(reason) {
+  const log = $("chat-log");
+  if (!log) return;
+  // Patient and incident answers are snapshots of mutable state. Keeping them
+  // visually active after a reset makes an old answer look current, so replace
+  // the transcript with an explicit boundary and immediately re-prime it.
+  log.innerHTML =
+    `<div class="chat-msg is-bot"><div class="chat-bubble">${esc(reason)}</div>` +
+    '<div class="chat-meta">new workspace state · previous clinical answers cleared</div></div>';
+  CHAT.lastResult = null;
+  CHAT.history = [];
+  renderSuggestions();
+  loadOperatorCases();
+}
 
 const CHAT_SUGGESTIONS = {
   clinician: ["Show the case inbox", "Which patients need attention?",
@@ -2514,6 +3044,7 @@ const CHAT_SUGGESTIONS = {
 };
 
 function initChat() {
+  CHAT.initialized = true;
   $("chat-toggle").addEventListener("click", toggleChat);
   $("chat-close").addEventListener("click", () => toggleChat(false));
   $("chat-form").addEventListener("submit", (e) => {
@@ -2538,12 +3069,12 @@ function initChat() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && CHAT.open) toggleChat(false);
   });
+  renderAssistantWelcome();
   renderSuggestions();
   refreshChatBudget();
-  primeChat();
+  if ($("role-gate").hidden) primeChat();
   loadOperatorCases();
   updateOperatorContext();
-  if ($("role-gate").hidden) toggleChat(true);
 }
 
 /* Open with what is actually true, not a generic greeting. The assistant should
@@ -2719,14 +3250,18 @@ async function sendChat(message) {
     }
     // "local" and "glossary" cost nothing; only "model" spends a token.
     const badge = r.source.startsWith("model") ? "interpreted by Gemini" : "answered locally";
-    const bubble = chatBubble(r.reply || "Done.", "bot", badge);
-    if (r.plan) renderChatPlan(r.plan);
-    if (r.case) renderCaseBrief(r.case);
+    const blockedRoleChange = r.ui?.role && r.ui.role !== currentRole();
+    const reply = blockedRoleChange
+      ? `This session is locked to ${role().label}. I cannot move you into another role. End this session from the workspace menu, then choose the correct role at login.`
+      : (r.reply || "Done.");
+    const bubble = chatBubble(reply, "bot", blockedRoleChange ? "role boundary enforced" : badge);
+    if (r.plan && !blockedRoleChange) renderChatPlan(r.plan);
+    if (r.case && !blockedRoleChange) renderCaseBrief(r.case);
     // A multi-step action shows its working, so the user sees what was done on
     // their behalf rather than being told it happened.
-    if (r.steps?.length) renderChatSteps(bubble, r.steps);
+    if (r.steps?.length && !blockedRoleChange) renderChatSteps(bubble, r.steps);
     await applyChatUi(r.ui || {});
-    renderChatNext(r.suggestions || []);
+    renderChatNext(blockedRoleChange ? [] : (r.suggestions || []));
     updateOperatorContext(r);
     if (r.budget) renderChatBudget(r.budget);
     loadOperatorCases();
@@ -2742,15 +3277,18 @@ async function sendChat(message) {
 
 /* The server tells us where to go; the views then load their own real data. */
 async function applyChatUi(ui) {
+  if (ui.role && ui.role !== currentRole()) {
+    $("urgent-announcer").textContent =
+      `Role change blocked. This session remains in the ${role().label} workspace.`;
+    return;
+  }
   if (ui.reset) {
     STATE.commandIncident = null;
     STATE.commandRecovery = null;
     STATE.lastRecovery = null;
     STATE.selectedPatient = null;
-  }
-  if (ui.role && ui.role !== currentRole()) {
-    selectRole(ui.role);
-    renderSuggestions();
+    resetOperatorConversation(
+      "Workspace reset. Previous answers no longer describe the live sandbox.");
   }
   if (ui.incident_id) {
     try {
@@ -2773,13 +3311,17 @@ async function applyChatUi(ui) {
       }
     } catch (e) { /* the view will reload it */ }
   }
-  if (ui.view) activateView(ui.view, { scroll: false });
-  if (ui.panel) showAssurancePanel(ui.panel);
-  if (ui.patient) {
-    STATE.selectedPatient = ui.patient;
-    if ($("view-records").classList.contains("active")) await loadPatients();
+  if (ui.view && role().views.includes(ui.view)) {
+    activateView(ui.view, { scroll: false });
+  } else if (ui.view) {
+    $("urgent-announcer").textContent = "That view is not available in this role.";
   }
-  if (ui.run && $("btn-assurance-privacy")) {
+  if (ui.panel && currentRole() === "compliance") showAssurancePanel(ui.panel);
+  if (ui.patient && currentRole() === "clinician") {
+    STATE.selectedPatient = ui.patient;
+    if ($("view-records").classList.contains("active")) await loadPatients(ui.patient);
+  }
+  if (ui.run && currentRole() === "compliance" && $("btn-assurance-privacy")) {
     if (ui.incident_id) $("as-incident").value = ui.incident_id;
     runAssurancePrivacy();
   }

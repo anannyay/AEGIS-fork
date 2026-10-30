@@ -17,6 +17,12 @@ _RESULTS_TMP = tempfile.mkdtemp(prefix="aegis-test-results-")
 os.environ["AEGIS_RESULTS_DIR"] = _RESULTS_TMP
 atexit.register(shutil.rmtree, _RESULTS_TMP, True)
 
+# API tests reset the synthetic operator workspace. Keep its durable SQLite
+# registry away from the user's live demo database.
+_CLINICAL_TMP = tempfile.mkdtemp(prefix="aegis-test-clinical-")
+os.environ["AEGIS_CLINICAL_DB"] = os.path.join(_CLINICAL_TMP, "registry.sqlite3")
+atexit.register(shutil.rmtree, _CLINICAL_TMP, True)
+
 # Running the test suite must never cost money. The assistant's odd-input and
 # robustness tests deliberately send text the local matcher cannot place, which
 # is exactly the input that would otherwise be billed to a live API key. Force

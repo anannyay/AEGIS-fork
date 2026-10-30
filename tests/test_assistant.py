@@ -92,6 +92,18 @@ class TestRoleSafety:
         for role in ("clinician", "safety", "compliance", "researcher"):
             assert actions_for(role)
 
+    def test_chat_cannot_change_the_signed_in_workspace(self, client):
+        body = client.post("/api/assistant", json={
+            "message": "switch to the safety officer role",
+            "role": "clinician",
+            "session_id": "locked-clinician-session",
+        }).json()
+
+        assert body["action"] == "switch_role"
+        assert body["ui"] == {}
+        assert "locked to the clinician workspace" in body["reply"]
+        assert "end this session" in body["reply"]
+
     def test_model_action_is_validated_against_the_role(self, router):
         """Simulate a model naming an action the role cannot take."""
         resolved = router._validate(
@@ -154,13 +166,23 @@ class TestAssistantEndpoint:
         client.post("/api/assistant", json={"message": "run recovery", "role": "safety"})
         client.post("/api/assistant", json={"message": "yes", "role": "safety"})
         listing = client.get("/api/patients").json()["patients"]
-        name = listing[0]["patient"]["name"].split()[0]
+        mrn = listing[0]["patient"]["mrn"]
 
         body = client.post("/api/assistant", json={
-            "message": f"show me {name}", "role": "clinician"}).json()
+            "message": f"show me {mrn}", "role": "clinician"}).json()
         assert body["action"] == "show_patient"
         assert body["source"] == "local"
         assert listing[0]["patient"]["name"] in body["reply"]
+        # The answer, selected card and detail payload must describe one
+        # canonical live record snapshot. Never let the console silently open
+        # a fallback patient while the reply names somebody else.
+        listed_tokens = {row["token"] for row in client.get("/api/patients").json()["patients"]}
+        assert body["ui"]["patient"] in listed_tokens
+        assert body["patient_record"]["patient"]["id"] == body["ui"]["patient"]
+        summary = body["patient_record"]["summary"]
+        assert f"{summary['total']} total record(s)" in body["reply"]
+        if summary["held"]:
+            assert f"{summary['held']} are held" in body["reply"]
 
     def test_recovery_without_an_incident_is_handled(self, client):
         body = client.post("/api/assistant", json={

@@ -8,7 +8,7 @@
   <title>AEGIS-Care · Clinical AI Memory Recovery</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2307151b'/%3E%3Crect x='7' y='17' width='4' height='8' fill='%2372e4df'/%3E%3Crect x='14' y='8' width='4' height='17' fill='%2372e4df'/%3E%3Crect x='21' y='13' width='4' height='12' fill='%2372e4df'/%3E%3C/svg%3E">
   <link rel="preload" as="image" href="/static/assets/hospital-operations-hero.png">
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=20261030-workflow5">
 </head>
 <body>
 <script>
@@ -16,6 +16,10 @@
   try {
     var t = localStorage.getItem("aegis-theme");
     if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+    var display = JSON.parse(localStorage.getItem("aegis-display") || "{}");
+    if (display.textSize === "large") document.documentElement.dataset.textSize = "large";
+    if (display.contrast === "high") document.documentElement.dataset.contrast = "high";
+    if (display.motion === "reduce") document.documentElement.dataset.motion = "reduce";
   } catch (e) { /* storage blocked: fall through to the system preference */ }
 </script>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -27,16 +31,19 @@
     </button>
     <div class="header-context" id="header-context">Clinical memory incident recovery</div>
     <div class="header-status">
-      <button class="role-switch" id="role-switch" type="button" aria-haspopup="listbox"
-              aria-expanded="false" title="Change simulated role">
+      <button class="header-utility" id="help-button" type="button">Help</button>
+      <button class="header-utility" id="accessibility-button" type="button"
+              aria-haspopup="dialog">Accessibility</button>
+      <button class="role-switch" id="role-switch" type="button" aria-haspopup="menu"
+              aria-expanded="false" title="Current workspace and session options">
         <span class="role-switch-avatar" id="role-switch-avatar" aria-hidden="true"></span>
         <span class="role-switch-text">
-          <span class="role-switch-label">Signed in as</span>
+          <span class="role-switch-label">Workspace locked</span>
           <strong id="role-switch-name">—</strong>
         </span>
         <span class="role-switch-caret" aria-hidden="true">▾</span>
       </button>
-      <div class="role-menu" id="role-menu" role="listbox" aria-label="Choose a simulated role" hidden></div>
+      <div class="role-menu" id="role-menu" role="menu" aria-label="Session options" hidden></div>
       <span class="system-pulse" aria-hidden="true"></span>
       <span id="version">v…</span>
       <button class="theme-toggle" id="theme-toggle" type="button"
@@ -58,25 +65,79 @@
 <!-- ============ ROLE SELECTION (first run) ============ -->
 <div class="role-gate" id="role-gate" hidden>
   <div class="role-gate-inner">
+    <section class="login-hero" aria-label="AEGIS-Care secure workspace access">
+      <div class="login-hero-image" aria-hidden="true"></div>
+      <div class="login-hero-scrim" aria-hidden="true"></div>
+      <div class="login-hero-grid" aria-hidden="true"></div>
+      <div class="login-hero-content">
+        <div class="login-brand">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="brand-word">AEGIS<span>·CARE</span></span>
+        </div>
+        <div>
+          <span class="login-overline">Clinical AI memory assurance</span>
+          <h1>One system.<br><em>Four protected workspaces.</em></h1>
+          <p>Your workspace stays locked to the role you choose. AEGIS can guide work
+            inside it, but cannot move you into another role.</p>
+        </div>
+        <div class="login-trust-row" aria-label="Workspace safeguards">
+          <span><b>01</b> Synthetic records</span>
+          <span><b>02</b> Role-locked session</span>
+          <span><b>03</b> Auditable actions</span>
+        </div>
+      </div>
+    </section>
     <div class="role-gate-head">
-      <div class="brand-word gate-brand">AEGIS<span>·CARE</span></div>
-      <h1>Who is using this console?</h1>
-      <p>AEGIS-Care shows each role only the information that role is authorised to
-        act on, in the language that role uses. You can change this at any time from
-        the header.</p>
+      <div class="gate-kicker">Begin a protected session</div>
+      <h2>Choose the workspace for your role</h2>
+      <p>Each workspace shows only the tasks and information that person needs. Choose
+        your role and confirm it. To use a different role later, end this session first.</p>
     </div>
-    <div class="role-gate-grid" id="role-gate-grid"></div>
+    <div class="role-gate-layout">
+      <div>
+        <h2 class="gate-section-title">1. Who are you signing in as?</h2>
+        <div class="role-gate-grid" id="role-gate-grid" role="radiogroup"
+             aria-label="Choose your workspace role"></div>
+      </div>
+      <aside class="gate-confirm" id="gate-confirm" aria-live="polite">
+        <div class="gate-confirm-step">2. Confirm your workspace</div>
+        <div id="gate-confirm-copy">
+          <h2>Select a role to continue</h2>
+          <p>We will explain what you can see and what actions you can take.</p>
+        </div>
+        <button class="btn gate-continue" id="gate-continue" type="button" disabled>
+          Continue to workspace
+        </button>
+        <button class="gate-accessibility" id="gate-accessibility" type="button">
+          Adjust text, contrast or motion
+        </button>
+      </aside>
+    </div>
     <div class="role-gate-foot">
       <span class="gate-note-mark" aria-hidden="true">!</span>
       <div>
-        <strong>This is a simulated role, not a login.</strong>
-        AEGIS-Care is a research prototype running on synthetic records. Role
-        separation is enforced by the service itself; this screen only chooses which
-        authorised view to present.
+        <strong>Demo access — not production authentication.</strong>
+        This research prototype uses synthetic records. Choosing a role changes the
+        interface and service permissions, but it does not verify a real staff identity.
+        Production deployment requires identity-provider integration. Never enter real
+        patient information here.
       </div>
     </div>
   </div>
 </div>
+
+<dialog class="session-dialog" id="session-dialog" aria-labelledby="session-dialog-title">
+  <form method="dialog" class="session-dialog-card">
+    <span class="section-kicker">Protected role boundary</span>
+    <h2 id="session-dialog-title">End this workspace session?</h2>
+    <p id="session-dialog-copy">You will return to the role login. Patient and incident
+      data will not be reset.</p>
+    <div class="session-dialog-actions">
+      <button class="btn ghost" value="cancel">Stay in this workspace</button>
+      <button class="btn danger" id="confirm-end-session" value="confirm">End session</button>
+    </div>
+  </form>
+</dialog>
 
 <main id="main" tabindex="-1">
 
@@ -84,15 +145,31 @@
   <section class="view" id="view-records">
     <div class="role-intro">
       <div>
-        <div class="eyebrow">Patient records</div>
-        <h2 id="records-headline">Records the assistant holds about your patients</h2>
-        <p id="records-lede">Each patient shows whether the assistant's notes about them
-          are safe to rely on right now.</p>
+        <div class="eyebrow">Nurse workspace · patient safety check</div>
+          <h2 id="records-headline">Know what needs attention.</h2>
+          <p id="records-lede">Choose a synthetic patient, check what AEGIS found,
+            then hand over a record or report a concern. Patient identity and source
+            status are checked automatically at every handover.</p>
       </div>
       <div class="role-intro-aside" id="records-rollup"></div>
     </div>
+      <div class="nurse-path" aria-label="Patient workflow">
+        <span><b>1</b> Find a patient</span>
+        <span><b>2</b> Read the status</span>
+        <span><b>3</b> Choose an action</span>
+        <button class="btn ghost small" id="records-guide" type="button">Help</button>
+      </div>
+      <div class="records-toolbar">
+        <label for="records-search">Find a patient</label>
+        <input id="records-search" type="search" autocomplete="off" placeholder="Name, synthetic ID, or MRN">
+        <div class="patient-list-filters" role="group" aria-label="Patient list filter">
+          <button type="button" id="records-filter-attention" aria-pressed="true">Needs review</button>
+          <button type="button" id="records-filter-all" aria-pressed="false">All patients</button>
+        </div>
+        <span id="records-match-count" aria-live="polite"></span>
+      </div>
     <div class="records-layout">
-      <div class="records-list" id="records-list" aria-label="Patient list"></div>
+        <div class="records-list" id="records-list" aria-label="Patient list"></div>
       <div class="records-detail" id="records-detail"></div>
     </div>
   </section>
@@ -523,6 +600,37 @@
   </section>
 </main>
 
+<dialog class="accessibility-dialog" id="accessibility-dialog" aria-labelledby="accessibility-title">
+  <form method="dialog" class="accessibility-card">
+    <div class="accessibility-head">
+      <div>
+        <span class="section-kicker">Display settings</span>
+        <h2 id="accessibility-title">Make AEGIS easier to use</h2>
+      </div>
+      <button class="dialog-close" value="close" aria-label="Close accessibility settings">&times;</button>
+    </div>
+    <p>These settings are saved on this device. They do not change patient or incident data.</p>
+    <div class="preference-list">
+      <label class="preference-row">
+        <span><strong>Larger text</strong><small>Increase labels, instructions and patient details.</small></span>
+        <input id="pref-large-text" type="checkbox" role="switch">
+      </label>
+      <label class="preference-row">
+        <span><strong>High contrast</strong><small>Strengthen borders, text and focus indicators.</small></span>
+        <input id="pref-high-contrast" type="checkbox" role="switch">
+      </label>
+      <label class="preference-row">
+        <span><strong>Reduce motion</strong><small>Stop non-essential animation and smooth scrolling.</small></span>
+        <input id="pref-reduce-motion" type="checkbox" role="switch">
+      </label>
+    </div>
+    <div class="accessibility-actions">
+      <button class="btn ghost" id="preferences-reset" type="button">Reset display settings</button>
+      <button class="btn" value="close">Done</button>
+    </div>
+  </form>
+</dialog>
+
 <div class="coach" id="coach" hidden>
   <div class="coach-card" id="coach-card">
     <div class="coach-step" id="coach-step"></div>
@@ -538,19 +646,19 @@
 <button class="chat-toggle" id="chat-toggle" type="button"
         aria-expanded="false" aria-controls="chat-panel">
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4 19.5l1.4-4.6A7.5 7.5 0 1 1 20 11.5z"/></svg>
-  <span>Operator</span>
+  <span id="chat-toggle-label">Ask AEGIS</span>
 </button>
 
-<section class="chat-panel" id="chat-panel" hidden aria-label="AEGIS Operator">
+<section class="chat-panel" id="chat-panel" hidden aria-label="Ask AEGIS">
   <header class="chat-head">
     <div class="operator-identity">
       <span class="operator-mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <div>
-        <strong>AEGIS Operator</strong>
+        <strong id="assistant-title">AEGIS Guide</strong>
         <span id="chat-budget">Grounded in live system state</span>
       </div>
     </div>
-    <button class="chat-close" id="chat-close" type="button" aria-label="Close operator">&times;</button>
+    <button class="chat-close" id="chat-close" type="button" aria-label="Close AEGIS Guide">&times;</button>
   </header>
   <div class="operator-context" aria-live="polite">
     <div class="operator-context-copy">
@@ -581,13 +689,14 @@
   <div class="chat-suggestions" id="chat-suggestions"></div>
   <form class="chat-form" id="chat-form">
     <input id="chat-input" type="text" autocomplete="off" maxlength="600"
-           placeholder="Describe the situation or desired outcome&hellip;" aria-label="Message the operator">
+           placeholder="Ask what this means or what to do next&hellip;" aria-label="Ask AEGIS">
     <button class="btn small" type="submit">Send</button>
   </form>
 </section>
 
 <div class="toast-stack" id="toast-stack" role="status" aria-live="polite" aria-atomic="false"></div>
+<div class="sr-only" id="urgent-announcer" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20261030-workflow5"></script>
 </body>
 </html>

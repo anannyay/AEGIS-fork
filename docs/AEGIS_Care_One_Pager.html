@@ -1,0 +1,1290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AEGIS-Care research one-pager: privacy-bounded recovery for contaminated clinical AI memory.">
+  <title>AEGIS-Care — Research One-Pager</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
+
+    :root {
+      --ink: #152b3b;
+      --ink-2: #28465b;
+      --paper: #f4f4f0;
+      --surface: #e8eceb;
+      --line: #aeb9ba;
+      --muted: #5e6e73;
+      --steel: #648ba6;
+      --aqua: #42bdc8;
+      --white: #ffffff;
+      --warn: #d36956;
+      --ok: #278b82;
+      --shadow: 0 24px 70px rgba(5, 19, 27, .28);
+      --condensed: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", "Segoe UI", sans-serif;
+      --body: "Barlow", "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; min-height: 100%; }
+
+    body {
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #d9dcdf;
+      color: var(--ink);
+      font-family: var(--body);
+    }
+
+    button, a { font: inherit; }
+
+    #viewport {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+    }
+
+    #poster {
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      transform-origin: 0 0;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .masthead {
+      position: relative;
+      height: 190px;
+      flex: 0 0 190px;
+      display: grid;
+      grid-template-columns: 1fr 660px;
+      gap: 40px;
+      padding: 18px 32px 28px;
+      overflow: hidden;
+      color: var(--white);
+      background: var(--ink);
+    }
+
+    .masthead::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 1;
+      background-image:
+        linear-gradient(to right, rgba(242,242,243,.06) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(242,242,243,.06) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+
+    .masthead::after {
+      content: "";
+      position: absolute;
+      top: -140px;
+      right: 300px;
+      width: 380px;
+      height: 380px;
+      border: 1px solid rgba(148,188,227,.22);
+      border-radius: 50%;
+    }
+
+    .brand-lockup {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      min-width: 0;
+    }
+
+    .university-mark {
+      flex: 0 0 112px;
+      width: 112px;
+      height: 112px;
+      display: grid;
+      place-items: center;
+      padding: 6px;
+      background: #f7f7f5;
+      border: 1px solid rgba(255,255,255,.45);
+    }
+
+    .university-mark img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .project-lockup { min-width: 0; }
+
+    .brand-row {
+      margin-bottom: 5px;
+      color: var(--steel);
+      font-family: var(--condensed);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .mark {
+      display: grid;
+      grid-template-columns: repeat(4, 7px);
+      gap: 4px;
+      height: 30px;
+      align-items: end;
+    }
+
+    .mark i { display: block; background: currentColor; }
+    .mark i:nth-child(1) { height: 13px; }
+    .mark i:nth-child(2) { height: 26px; }
+    .mark i:nth-child(3) { height: 18px; }
+    .mark i:nth-child(4) { height: 30px; }
+
+    .title {
+      margin: 0;
+      font-family: var(--condensed);
+      font-size: 72px;
+      font-weight: 600;
+      line-height: .9;
+      letter-spacing: -.035em;
+      text-transform: uppercase;
+    }
+
+    .title .slash { color: var(--aqua); }
+
+    .thesis {
+      flex: 1 1 260px;
+      min-width: 220px;
+      max-width: 355px;
+      margin: 0;
+      padding-left: 22px;
+      border-left: 1px solid rgba(242,242,243,.3);
+      color: #b5d9fd;
+      font-family: var(--condensed);
+      font-size: 25px;
+      line-height: 1.12;
+    }
+
+    .scorecard {
+      position: relative;
+      z-index: 1;
+      align-self: center;
+      border-top: 1px solid rgba(255,255,255,.38);
+      border-bottom: 1px solid rgba(255,255,255,.38);
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .score {
+      min-width: 0;
+      padding: 13px 16px 12px;
+      border-left: 1px solid rgba(255,255,255,.24);
+    }
+
+    .score:first-child { border-left: 0; }
+
+    .score strong {
+      display: block;
+      color: var(--white);
+      font-family: var(--condensed);
+      font-size: 53px;
+      line-height: .95;
+      letter-spacing: -.04em;
+    }
+
+    .score span {
+      display: block;
+      margin-top: 7px;
+      color: #b9ccd0;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .boundary {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 2;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(66, 189, 200, .14);
+      color: #d9f6f7;
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .065em;
+      text-transform: uppercase;
+    }
+
+    .boundary b { color: var(--aqua); }
+
+    .content {
+      height: 634px;
+      flex: 0 0 634px;
+      display: grid;
+      grid-template-columns: 620px 500px 1fr;
+      gap: 24px;
+      padding: 0;
+    }
+
+    .panel {
+      min-width: 0;
+      height: 634px;
+      padding: 0;
+      border-left: 0;
+      overflow: hidden;
+    }
+
+    .panel:first-child {
+      padding-left: 0;
+      border-left: 0;
+    }
+
+    .panel:last-child { padding-right: 0; }
+
+    .section-head {
+      height: 50px;
+      display: flex;
+      align-items: baseline;
+      gap: 13px;
+      border-bottom: 2px solid var(--ink);
+    }
+
+    .section-head .num {
+      color: var(--steel);
+      font-family: var(--condensed);
+      font-size: 25px;
+      font-weight: 900;
+      letter-spacing: .05em;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-family: var(--condensed);
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: -.025em;
+    }
+
+    .lead {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    .lead strong { color: var(--ink); }
+
+    .chain {
+      position: relative;
+      height: 260px;
+      margin-top: 9px;
+      padding: 14px 9px 2px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.43);
+      overflow: hidden;
+    }
+
+    .chain::before {
+      content: none;
+    }
+
+    .chain svg { width: 100%; height: 100%; display: block; }
+
+    .figure-label {
+      position: absolute;
+      left: 18px;
+      top: -1px;
+      z-index: 2;
+      padding: 0 7px;
+      background: var(--paper);
+      color: var(--steel);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .hop {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.08;
+    }
+
+    .hop b { display: block; color: var(--ink); font-size: 13px; }
+
+    .hop i {
+      position: relative;
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      background: var(--paper);
+      animation: contaminate 7.5s ease-in-out infinite;
+    }
+
+    .hop i::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      background: var(--aqua);
+      opacity: 0;
+      animation: innerPulse 7.5s ease-in-out infinite;
+    }
+
+    .hop:nth-child(1) { left: 25px; top: 102px; }
+    .hop:nth-child(2) { left: 151px; top: 34px; }
+    .hop:nth-child(3) { left: 151px; top: 169px; }
+    .hop:nth-child(4) { right: 22px; top: 30px; }
+    .hop:nth-child(5) { right: 18px; top: 169px; }
+    .hop:nth-child(2) i, .hop:nth-child(2) i::after { animation-delay: 1.1s; }
+    .hop:nth-child(3) i, .hop:nth-child(3) i::after { animation-delay: 2.1s; }
+    .hop:nth-child(4) i, .hop:nth-child(4) i::after { animation-delay: 3.1s; }
+    .hop:nth-child(5) i, .hop:nth-child(5) i::after { animation-delay: 4.1s; }
+
+    .chain-caption {
+      position: absolute;
+      left: 14px;
+      bottom: 10px;
+      color: var(--warn);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+
+    .baseline-grid {
+      display: grid;
+      grid-template-columns: 116px 1fr 1fr;
+      gap: 6px 9px;
+      align-items: center;
+      margin-top: 9px;
+    }
+
+    .baseline {
+      display: contents;
+    }
+
+    .baseline .code {
+      color: var(--ink);
+      font-family: var(--condensed);
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .baseline-head {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .baseline-track {
+      height: 15px;
+      overflow: hidden;
+      background: #dfe3e3;
+    }
+
+    .baseline-fill {
+      width: var(--w);
+      height: 100%;
+      transform-origin: left;
+      background: var(--steel);
+      animation: barGrow 1.1s cubic-bezier(.2,.8,.2,1) both;
+    }
+
+    .baseline.aegis .baseline-fill { background: var(--ink); }
+
+    .baseline-caption {
+      margin-top: 8px;
+      color: var(--steel);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .problem-statement {
+      margin-top: 9px;
+      padding: 9px 12px;
+      border-left: 4px solid var(--warn);
+      background: rgba(211,105,86,.08);
+      color: var(--ink-2);
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.35;
+    }
+
+    .objectives-title, .subhead {
+      margin-top: 8px;
+      color: var(--steel);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .objectives {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 5px;
+    }
+
+    .objective {
+      min-height: 39px;
+      padding: 6px 7px;
+      border: 1px solid var(--line);
+      color: var(--ink-2);
+      background: rgba(255,255,255,.45);
+      font-size: 9px;
+      line-height: 1.2;
+    }
+
+    .objective b {
+      display: block;
+      color: var(--ink);
+      font-family: var(--condensed);
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .care-wrap {
+      position: relative;
+      width: 320px;
+      height: 320px;
+      margin: 8px auto 4px;
+    }
+
+    .orbit {
+      position: absolute;
+      inset: 32px;
+      border: 1px solid var(--steel);
+      border-radius: 50%;
+    }
+
+    .orbit::before, .orbit::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      border: 1px dashed rgba(100,139,166,.46);
+    }
+
+    .orbit::before { inset: 34px; }
+    .orbit::after { inset: 67px; }
+
+    .core {
+      position: absolute;
+      inset: 98px;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: var(--white);
+      text-align: center;
+      background: var(--ink);
+      box-shadow: 0 0 0 10px rgba(66,189,200,.11);
+    }
+
+    .core strong {
+      display: block;
+      color: var(--aqua);
+      font-family: var(--condensed);
+      font-size: 31px;
+      line-height: .85;
+      letter-spacing: -.03em;
+    }
+
+    .core span {
+      display: block;
+      max-width: 102px;
+      margin-top: 6px;
+      color: #d8e4e6;
+      font-size: 10px;
+      line-height: 1.22;
+    }
+
+    .care-step {
+      position: absolute;
+      z-index: 3;
+      width: 92px;
+      text-align: center;
+    }
+
+    .care-step .letter {
+      position: relative;
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 4px;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      background: var(--paper);
+      font-family: var(--condensed);
+      font-size: 31px;
+      font-weight: 900;
+      animation: carePulse 8s ease-out infinite;
+    }
+
+    .care-step b {
+      display: block;
+      color: var(--ink);
+      font-family: var(--condensed);
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .care-step small {
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.1;
+    }
+
+    .care-step.a { right: 0; top: 114px; }
+    .care-step.r { left: 114px; bottom: 0; }
+    .care-step.e { left: 0; top: 114px; }
+    .care-step.c { left: 114px; top: 0; }
+    .care-step.a .letter { animation-delay: 2s; }
+    .care-step.r .letter { animation-delay: 4s; }
+    .care-step.e .letter { animation-delay: 6s; }
+
+    .care-notes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .care-note {
+      min-height: 57px;
+      padding: 7px 8px 6px;
+      border-top: 2px solid var(--line);
+    }
+
+    .care-note b {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--ink);
+      font-size: 11px;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+
+    .care-note span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.2;
+    }
+
+    .privacy-band {
+      margin-top: 6px;
+      padding: 8px 10px;
+      background: var(--ink);
+      color: #d7e5e7;
+      font-size: 10px;
+      line-height: 1.22;
+    }
+
+    .privacy-band strong { color: var(--aqua); }
+
+    .evidence-top {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .campaign {
+      min-height: 70px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.5);
+    }
+
+    .campaign .eyebrow {
+      color: var(--steel);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+
+    .campaign strong {
+      display: block;
+      margin-top: 3px;
+      font-family: var(--condensed);
+      font-size: 23px;
+      line-height: 1;
+    }
+
+    .campaign p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
+    .tradeoff {
+      position: relative;
+      height: 180px;
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(rgba(21,43,59,.09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(21,43,59,.09) 1px, transparent 1px),
+        rgba(255,255,255,.38);
+      background-size: 25% 25%;
+    }
+
+    .axis-y, .axis-x {
+      position: absolute;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .axis-y { left: -42px; top: 78px; transform: rotate(-90deg); }
+    .axis-x { right: 72px; top: 8px; bottom: auto; }
+
+    .target-zone {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 28%;
+      height: 33%;
+      border: 2px solid rgba(39,139,130,.65);
+      background: rgba(39,139,130,.11);
+    }
+
+    .target-zone span {
+      position: absolute;
+      right: 7px;
+      top: 6px;
+      color: var(--ok);
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .dot {
+      position: absolute;
+      width: 15px;
+      height: 15px;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      background: var(--paper);
+      transform: translate(-50%, 50%);
+    }
+
+    .dot::after {
+      content: attr(data-id);
+      position: absolute;
+      left: 17px;
+      top: -5px;
+      color: var(--ink);
+      font-family: var(--condensed);
+      font-size: 13px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .dot.c { left: 1%; bottom: 2%; }
+    .dot.d { left: 97%; bottom: 55%; }
+    .dot.f { left: 24%; bottom: 2%; }
+    .dot.g { left: 87%; bottom: 2%; border-color: var(--warn); }
+    .dot.b { left: 96%; bottom: 87%; }
+    .dot.b::after, .dot.d::after { left: auto; right: 17px; }
+    .dot.g::after { top: -20px; }
+    .dot.i {
+      left: 97%;
+      bottom: 2%;
+      width: 22px;
+      height: 22px;
+      border: 0;
+      background: var(--aqua);
+      box-shadow: 0 0 0 7px rgba(66,189,200,.17);
+      animation: winner 2.7s ease-in-out infinite;
+    }
+
+    .dot.i::after {
+      left: auto;
+      right: 25px;
+      top: -8px;
+      color: var(--ink);
+      font-size: 18px;
+    }
+
+    .plot-key {
+      position: absolute;
+      left: 12px;
+      top: 40px;
+      max-width: 250px;
+      color: var(--ink-2);
+      font-size: 9px;
+      line-height: 1.35;
+    }
+
+    .plot-key b { color: var(--ink); }
+
+    .plot-note {
+      position: absolute;
+      left: 12px;
+      top: 9px;
+      max-width: 260px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 148px 1fr 46px;
+      gap: 8px;
+      align-items: center;
+      margin-top: 5px;
+    }
+
+    .comparison:first-child { margin-top: 8px; }
+
+    .comparison label {
+      color: var(--ink-2);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .bar-track {
+      height: 11px;
+      overflow: hidden;
+      background: #d6dcdb;
+    }
+
+    .bar-fill {
+      width: var(--w);
+      height: 100%;
+      transform-origin: left;
+      background: var(--steel);
+      animation: barGrow 1.1s cubic-bezier(.2,.8,.2,1) both;
+    }
+
+    .comparison.good .bar-fill { background: var(--ok); }
+    .comparison.bad .bar-fill { background: var(--warn); }
+
+    .comparison output {
+      color: var(--ink);
+      font-family: var(--condensed);
+      font-size: 14px;
+      font-weight: 900;
+      text-align: right;
+    }
+
+    .proof {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .proof-card {
+      min-height: 82px;
+      padding: 8px 10px;
+      color: var(--white);
+      background: var(--ink);
+    }
+
+    .proof-card b {
+      display: block;
+      color: var(--aqua);
+      font-size: 10px;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+
+    .proof-card strong {
+      display: block;
+      margin-top: 4px;
+      font-family: var(--condensed);
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .proof-card p {
+      margin: 4px 0 0;
+      color: #c7d6d9;
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
+    .evidence-note {
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.3;
+    }
+
+    .evidence-note strong { color: var(--ink); }
+
+    .footer {
+      height: 140px;
+      flex: 0 0 140px;
+      display: grid;
+      grid-template-columns: 1.02fr 1.03fr 1.08fr .96fr;
+      gap: 22px;
+      padding: 10px 0 0;
+      border-top: 2px solid var(--ink);
+      background: rgba(232,236,235,.9);
+    }
+
+    .footer h3 {
+      margin: 0 0 7px;
+      color: var(--steel);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+
+    .tag {
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      color: var(--ink-2);
+      background: rgba(255,255,255,.42);
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .tag.alert { border-color: rgba(211,105,86,.5); color: #8c382b; }
+
+    .stack-line {
+      color: var(--ink-2);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .footer-copy {
+      color: var(--ink-2);
+      font-size: 10px;
+      line-height: 1.34;
+    }
+
+    .footer-copy b { color: var(--ink); }
+
+    .tbc {
+      color: #8c382b;
+      font-weight: 800;
+    }
+
+    .stack-line b { color: var(--ink); }
+
+    .identity {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+      padding-left: 18px;
+      border-left: 1px solid var(--line);
+    }
+
+    .identity strong {
+      display: block;
+      font-family: var(--condensed);
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .identity span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.28;
+    }
+
+    .identity a {
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 800;
+      text-decoration: none;
+      border-bottom: 1px solid var(--steel);
+      align-self: flex-start;
+    }
+
+    .toolbar {
+      position: fixed;
+      right: 16px;
+      bottom: 14px;
+      z-index: 50;
+      display: flex;
+      gap: 8px;
+      opacity: .17;
+      transition: opacity .18s ease;
+    }
+
+    .toolbar:hover, .toolbar:focus-within { opacity: 1; }
+
+    .toolbar button {
+      border: 1px solid rgba(255,255,255,.34);
+      border-radius: 4px;
+      padding: 8px 11px;
+      color: #e7f1f2;
+      background: rgba(7,19,27,.92);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .toolbar button:hover { border-color: var(--aqua); color: var(--aqua); }
+
+    @keyframes contaminate {
+      0%, 8% { background: var(--paper); box-shadow: none; }
+      14%, 72% { background: var(--ink); box-shadow: 0 0 0 7px rgba(211,105,86,.12); }
+      82%, 100% { background: var(--paper); box-shadow: none; }
+    }
+
+    @keyframes drawEdge {
+      0% { stroke-dashoffset: 400; }
+      18%, 100% { stroke-dashoffset: 0; }
+    }
+
+    @keyframes infect {
+      0%, 10% { fill: var(--paper); stroke-width: 1.5; }
+      14% { stroke-width: 6; }
+      20%, 100% { fill: var(--ink); stroke-width: 1.5; }
+    }
+
+    @keyframes ringOut {
+      0% { transform: scale(.25); opacity: .6; }
+      70%, 100% { transform: scale(4.2); opacity: 0; }
+    }
+
+    @keyframes innerPulse {
+      0%, 10% { opacity: 0; transform: scale(.3); }
+      15%, 72% { opacity: 1; transform: scale(1); }
+      82%, 100% { opacity: 0; transform: scale(.3); }
+    }
+
+    @keyframes carePulse {
+      0%, 12%, 100% { background: var(--paper); color: var(--ink); box-shadow: none; }
+      17%, 26% { background: var(--aqua); color: var(--ink); box-shadow: 0 0 0 10px rgba(66,189,200,.14); }
+      36% { background: var(--paper); color: var(--ink); box-shadow: none; }
+    }
+
+    @keyframes winner {
+      0%, 100% { box-shadow: 0 0 0 6px rgba(66,189,200,.15); }
+      50% { box-shadow: 0 0 0 13px rgba(66,189,200,.03); }
+    }
+
+    @keyframes barGrow {
+      from { transform: scaleX(0); }
+      to { transform: scaleX(1); }
+    }
+
+    .motion-paused *, .motion-paused *::before, .motion-paused *::after {
+      animation-play-state: paused !important;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+
+    @page { size: 16in 9in; margin: 0; }
+
+    @media print {
+      html, body { width: 1536px; height: 864px; overflow: hidden; background: white; }
+      #viewport { width: 1536px !important; height: 864px !important; }
+      #poster { transform: scale(.8) !important; box-shadow: none; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .toolbar { display: none; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      .chain path { stroke-dashoffset: 0 !important; }
+      .baseline-fill, .bar-fill { transform: scaleX(1) !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <main id="poster" aria-label="AEGIS-Care research one-pager">
+      <header class="masthead">
+        <div class="brand-lockup">
+          <div class="university-mark">
+            <img src="assets/svkm_nmims_logo.png" alt="SVKM's NMIMS — Deemed-to-be University">
+          </div>
+          <div class="project-lockup">
+            <div class="brand-row">NMIMS MPSTME · B.Tech Computer Engineering Capstone · v5.0</div>
+            <h1 class="title">AEGIS<span class="slash">-</span>CARE</h1>
+          </div>
+          <p class="thesis">Delete the bad memory and the damage stays. AEGIS-Care rebuilds everything it touched.</p>
+        </div>
+
+        <div class="scorecard" aria-label="Full CARE controlled benchmark results">
+          <div class="score"><strong>0.000</strong><span>Residual harm<br>lower is better</span></div>
+          <div class="score"><strong>1.000</strong><span>Descendant recall<br>&amp; precision</span></div>
+          <div class="score"><strong>1.000</strong><span>Benign state<br>retained</span></div>
+        </div>
+
+        <div class="boundary"><b>Research boundary</b> fully synthetic FHIR · mechanism evidence, not a diagnosis, clinical validation or patient-benefit claim</div>
+      </header>
+
+      <div class="content">
+        <section class="panel" aria-labelledby="incident-title">
+          <div class="section-head">
+            <span class="num">01</span>
+            <h2 id="incident-title">The incident</h2>
+          </div>
+          <p class="lead">A corrupted patient alias is summarised, cached and handed over. Deleting the original entry does not revoke the <strong>downstream clinical memories</strong> already in use.</p>
+
+          <div class="chain" aria-label="Multi-hop contaminated memory propagation diagram">
+            <span class="figure-label">Fig. 1 — propagation</span>
+            <svg viewBox="0 0 640 320" role="img" aria-label="A seed memory propagating across three hops into eleven descendants">
+              <g stroke="var(--steel)" fill="none" stroke-width="1.5" stroke-dasharray="400" stroke-dashoffset="400">
+                <path d="M52 160 C126 160,126 58,199 58" style="animation:drawEdge 7s linear .4s infinite"></path>
+                <path d="M52 160 C126 160,126 160,199 160" style="animation:drawEdge 7s linear .4s infinite"></path>
+                <path d="M52 160 C126 160,126 262,199 262" style="animation:drawEdge 7s linear .4s infinite"></path>
+                <path d="M223 58 C310 58,310 34,389 34" style="animation:drawEdge 7s linear 1.6s infinite"></path>
+                <path d="M223 58 C310 58,310 118,389 118" style="animation:drawEdge 7s linear 1.6s infinite"></path>
+                <path d="M223 160 C310 160,310 118,389 118" style="animation:drawEdge 7s linear 1.6s infinite"></path>
+                <path d="M223 160 C310 160,310 202,389 202" style="animation:drawEdge 7s linear 1.6s infinite"></path>
+                <path d="M223 262 C310 262,310 202,389 202" style="animation:drawEdge 7s linear 1.6s infinite"></path>
+                <path d="M223 262 C310 262,310 286,389 286" style="animation:drawEdge 7s linear 1.6s infinite"></path>
+                <path d="M413 34 C500 34,500 58,589 58" style="animation:drawEdge 7s linear 2.8s infinite"></path>
+                <path d="M413 118 C500 118,500 138,589 138" style="animation:drawEdge 7s linear 2.8s infinite"></path>
+                <path d="M413 202 C500 202,500 218,589 218" style="animation:drawEdge 7s linear 2.8s infinite"></path>
+                <path d="M413 286 C500 286,500 292,589 292" style="animation:drawEdge 7s linear 2.8s infinite"></path>
+              </g>
+
+              <circle cx="30" cy="160" r="22" fill="none" stroke="var(--steel)" stroke-width="1.5" style="transform-origin:30px 160px;animation:ringOut 7s ease-out infinite"></circle>
+              <circle cx="30" cy="160" r="22" fill="var(--ink)"></circle>
+              <text x="30" y="199" text-anchor="middle" fill="var(--ink-2)" font-family="var(--condensed)" font-weight="600" font-size="20">SEED</text>
+
+              <g fill="var(--paper)" stroke="var(--ink)" stroke-width="1.5">
+                <circle cx="211" cy="58" r="12" style="animation:infect 7s ease-out .9s infinite"></circle>
+                <circle cx="211" cy="160" r="12" style="animation:infect 7s ease-out .9s infinite"></circle>
+                <circle cx="211" cy="262" r="12" style="animation:infect 7s ease-out .9s infinite"></circle>
+                <circle cx="401" cy="34" r="12" style="animation:infect 7s ease-out 2.1s infinite"></circle>
+                <circle cx="401" cy="118" r="12" style="animation:infect 7s ease-out 2.1s infinite"></circle>
+                <circle cx="401" cy="202" r="12" style="animation:infect 7s ease-out 2.1s infinite"></circle>
+                <circle cx="401" cy="286" r="12" style="animation:infect 7s ease-out 2.1s infinite"></circle>
+                <circle cx="601" cy="58" r="12" style="animation:infect 7s ease-out 3.3s infinite"></circle>
+                <circle cx="601" cy="138" r="12" style="animation:infect 7s ease-out 3.3s infinite"></circle>
+                <circle cx="601" cy="218" r="12" style="animation:infect 7s ease-out 3.3s infinite"></circle>
+                <circle cx="601" cy="292" r="12" style="animation:infect 7s ease-out 3.3s infinite"></circle>
+              </g>
+
+              <g font-size="18" fill="var(--muted)">
+                <text x="211" y="38" text-anchor="middle">lookup cue</text>
+                <text x="211" y="190" text-anchor="middle">nursing memory</text>
+                <text x="211" y="292" text-anchor="middle">retrieval plan</text>
+                <text x="424" y="39">handover</text>
+                <text x="424" y="123">observation</text>
+                <text x="424" y="207">shift note</text>
+                <text x="424" y="291">workflow hint</text>
+              </g>
+              <g font-size="18" fill="var(--muted)" text-anchor="end">
+                <text x="585" y="62">clinical summary</text>
+                <text x="585" y="142">care plan</text>
+                <text x="585" y="222">documented action</text>
+                <text x="585" y="296">cached procedure</text>
+              </g>
+              <g font-family="var(--condensed)" font-weight="600" font-size="19" fill="var(--steel)" text-anchor="middle">
+                <text x="30" y="13">HOP 0</text><text x="211" y="13">HOP 1</text><text x="401" y="13">HOP 2</text><text x="601" y="13">HOP 3</text>
+              </g>
+            </svg>
+          </div>
+
+          <div class="baseline-caption">Fig. 2 — what each response costs</div>
+          <div class="baseline-grid" aria-label="Residual harm and clean-state retention by recovery response">
+            <div></div><div class="baseline-head">Residual harm ↓</div><div class="baseline-head">Clean state kept ↑</div>
+            <div class="baseline">
+              <span class="code">Delete seed</span>
+              <div class="baseline-track"><div class="baseline-fill" style="--w:100%"></div></div>
+              <div class="baseline-track"><div class="baseline-fill" style="--w:100%"></div></div>
+            </div>
+            <div class="baseline">
+              <span class="code">Full reset</span>
+              <div class="baseline-track"><div class="baseline-fill" style="--w:3%"></div></div>
+              <div class="baseline-track"><div class="baseline-fill" style="--w:3%"></div></div>
+            </div>
+            <div class="baseline aegis">
+              <span class="code">AEGIS-Care</span>
+              <div class="baseline-track"><div class="baseline-fill" style="--w:3%"></div></div>
+              <div class="baseline-track"><div class="baseline-fill" style="--w:100%"></div></div>
+            </div>
+          </div>
+
+          <div class="problem-statement"><strong>Why it matters:</strong> the recovery target is not “delete a row.” It is to restore every affected future decision while preserving unrelated clinical memory and the privacy boundary.</div>
+          <div class="objectives-title">Objectives</div>
+          <div class="objectives">
+            <div class="objective"><b>Discover</b>recover descendants even when provenance edges are missing.</div>
+            <div class="objective"><b>Repair safely</b>rebuild only causally affected memories from trusted FHIR.</div>
+            <div class="objective"><b>Prove closure</b>preserve clean state, privacy and deletion integrity.</div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="care-title">
+          <div class="section-head">
+            <span class="num">02</span>
+            <h2 id="care-title">The CARE loop</h2>
+          </div>
+          <p class="lead"><strong>Proposed solution / technical design:</strong> each runtime joins a bounded recovery protocol. The coordinator receives commitments and decisions—not the clinical prose itself.</p>
+
+          <div class="care-wrap" aria-label="Candidate discovery, attribution, recompilation and enforcement loop">
+            <div class="orbit"></div>
+            <div class="core"><div><strong>CARE</strong><span>confirmed descendants re-enter as new, verifiable state</span></div></div>
+            <div class="care-step c"><div class="letter">C</div><b>Candidate</b><small>nominate</small></div>
+            <div class="care-step a"><div class="letter">A</div><b>Attribution</b><small>prove locally</small></div>
+            <div class="care-step r"><div class="letter">R</div><b>Recompile</b><small>rebuild cleanly</small></div>
+            <div class="care-step e"><div class="letter">E</div><b>Enforcement</b><small>block return</small></div>
+          </div>
+
+          <div class="subhead">Key features / innovation</div>
+          <div class="care-notes">
+            <div class="care-note"><b>Find beyond lineage</b><span>Exact edges plus receiver-scoped semantic sketches and FHIR support fingerprints.</span></div>
+            <div class="care-note"><b>Require causal proof</b><span>Local counterfactual replay asks whether the patient or action actually changes.</span></div>
+            <div class="care-note"><b>Rebuild from source</b><span>Confirmed descendants are reconstructed from canonical FHIR or held for review.</span></div>
+            <div class="care-note"><b>Make deletion stick</b><span>Signed tombstones, certificates and a resurrection firewall close the incident.</span></div>
+          </div>
+
+          <div class="privacy-band"><strong>Privacy design:</strong> raw content stays with its owning role. Capsule fields are purpose- and recipient-scoped; recovery decisions are auditable and independently verifiable.</div>
+        </section>
+
+        <section class="panel" aria-labelledby="evidence-title">
+          <div class="section-head">
+            <span class="num">03</span>
+            <h2 id="evidence-title">Prototype &amp; evidence</h2>
+          </div>
+          <p class="lead"><strong>Current progress:</strong> a runnable end-to-end prototype, role-aware UI, evidence verifier and paired benchmark suite. Full CARE is the only non-oracle condition that reaches every target together.</p>
+
+          <div class="evidence-top">
+            <article class="campaign">
+              <span class="eyebrow">Canonical controlled campaign</span>
+              <strong>900 runs · 100 incidents</strong>
+              <p>4 causal families × 3 depths × 5 provenance regimes × 9 recovery conditions.</p>
+            </article>
+            <article class="campaign">
+              <span class="eyebrow">External-format campaign</span>
+              <strong>108 runs · 12 incidents</strong>
+              <p>10 public Synthea patients · 3,623 FHIR resources · 7,003 rewritten references.</p>
+            </article>
+          </div>
+
+          <div class="tradeoff" aria-label="Trade-off plot showing benign state retention against residual harm">
+            <span class="axis-y">Residual harm ↓</span>
+            <span class="axis-x">Benign state retention →</span>
+            <div class="target-zone"><span>target</span></div>
+            <div class="plot-note">Representative controlled-benchmark positions. The useful region is low harm + high retention.</div>
+            <div class="plot-key"><b>B</b> seed delete · <b>C</b> full reset · <b>D</b> lineage only<br><b>F</b> sketch only · <b>G</b> raw oracle · <b>I</b> full CARE</div>
+            <span class="dot b" data-id="B"></span>
+            <span class="dot c" data-id="C"></span>
+            <span class="dot d" data-id="D"></span>
+            <span class="dot f" data-id="F"></span>
+            <span class="dot g" data-id="G"></span>
+            <span class="dot i" data-id="I"></span>
+          </div>
+
+          <div aria-label="Key baseline comparison bars">
+            <div class="comparison bad"><label>Seed deletion · harm</label><div class="bar-track"><div class="bar-fill" style="--w:26.7%"></div></div><output>.267</output></div>
+            <div class="comparison"><label>Lineage only · recall</label><div class="bar-track"><div class="bar-fill" style="--w:39.8%"></div></div><output>.398</output></div>
+            <div class="comparison bad"><label>Sketch only · clean state</label><div class="bar-track"><div class="bar-fill" style="--w:24.1%"></div></div><output>.241</output></div>
+            <div class="comparison good"><label>Full CARE · clean state</label><div class="bar-track"><div class="bar-fill" style="--w:100%"></div></div><output>1.00</output></div>
+          </div>
+
+          <div class="proof">
+            <article class="proof-card">
+              <b>Observed result · both campaigns</b>
+              <strong>0 harm · 100% recall · 100% precision</strong>
+              <p>With all clean state retained, zero unauthorised exposure and zero deletion resurrection.</p>
+            </article>
+            <div class="evidence-note"><strong>Evidence is reproducible.</strong><br>Deterministic experiments, SHA-256-bound manifests, signed recovery certificates and 225 repository tests support mechanism claims.<br><br><strong>Not evidence of:</strong> patient benefit, hospital deployment, certification or clinical effectiveness.</div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="footer">
+        <section>
+          <h3>Student details &amp; guidance</h3>
+          <div class="footer-copy"><b>Lakshit Sachdeva</b> · SAP: <span class="tbc">TBC</span><br><b>Trayee Nayampalli</b> · SAP: <span class="tbc">TBC</span><br><b>Anannya Samudra</b> · SAP: <span class="tbc">TBC</span><br><b>Sohum Sawant</b> · SAP: <span class="tbc">TBC</span><br><b>Project Mentor</b>: <span class="tbc">To Be Confirmed</span></div>
+        </section>
+
+        <section>
+          <h3>Academic &amp; technical context</h3>
+          <div class="footer-copy"><b>SVKM’s NMIMS · MPSTME</b><br>Department of Computer Engineering · B.Tech Capstone<br><b>Project:</b> AEGIS-Care — Privacy-Bounded Memory Recompiler<br><b>Built with:</b> Python, FastAPI, FHIR-shaped data, SQLite, SHA-256 and Ed25519.</div>
+        </section>
+
+        <section>
+          <h3>Social / environmental impact</h3>
+          <div class="footer-copy"><b>Social:</b> aims to reduce the persistence of wrong-patient and unauthorised clinical-agent memory while retaining useful, unrelated context and respecting role boundaries.<br><b>Environmental:</b> targeted repair may avoid repeated full-memory resets and recomputation; energy savings have <span class="tbc">not yet been measured</span>.</div>
+        </section>
+
+        <section>
+          <h3>Future scope / expected outcome</h3>
+          <div class="footer-copy">Clinician-supervised usability study · governed FHIR sandbox integration · stronger privacy-preserving fingerprints · calibrated thresholds · larger external synthetic cohorts.<br><b>Expected outcome:</b> independently verifiable, selective recovery without raw-content centralisation.<br><span class="tbc">Synthetic research prototype · not clinically validated.</span></div>
+        </section>
+      </footer>
+    </main>
+  </div>
+
+  <nav class="toolbar" aria-label="One-pager controls">
+    <button id="motionButton" type="button" aria-pressed="false">Pause motion</button>
+    <button id="printButton" type="button">Print / PDF</button>
+  </nav>
+
+  <script>
+    (() => {
+      const poster = document.getElementById('poster');
+      const viewport = document.getElementById('viewport');
+      const motionButton = document.getElementById('motionButton');
+      const printButton = document.getElementById('printButton');
+      const posterWidth = 1920;
+      const posterHeight = 1080;
+
+      function fitPoster() {
+        const scale = Math.min(window.innerWidth / posterWidth, window.innerHeight / posterHeight);
+        poster.style.transform = `scale(${scale})`;
+        viewport.style.width = `${posterWidth * scale}px`;
+        viewport.style.height = `${posterHeight * scale}px`;
+      }
+
+      motionButton.addEventListener('click', () => {
+        const paused = poster.classList.toggle('motion-paused');
+        motionButton.textContent = paused ? 'Resume motion' : 'Pause motion';
+        motionButton.setAttribute('aria-pressed', String(paused));
+      });
+
+      printButton.addEventListener('click', () => window.print());
+      window.addEventListener('resize', fitPoster, { passive: true });
+      fitPoster();
+    })();
+  </script>
+</body>
+</html>

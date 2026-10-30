@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from ..assistant import Router
 from ..assistant.intents import normalise_param
 from ..care.coordinator import CAREOptions, RecoveryCoordinator
+from ..clinical_registry import ClinicalRegistry, DESTINATIONS, PATIENT_COUNT
 from ..config import CONFIG, PROJECT_ROOT, RESULTS_DIR
 from ..environment import AegisEnvironment
 from ..eval.baselines import CONDITION_INFO, BaselineRunner
@@ -48,6 +49,7 @@ class AppState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.env = AegisEnvironment()
+        self.registry = ClinicalRegistry()
         self.builder = ScenarioBuilder(self.env)
         self.incidents: Dict[str, Incident] = {}
         self.recoveries: Dict[str, Any] = {}
@@ -66,6 +68,7 @@ class AppState:
         self.experiment_started_at: Optional[float] = None
 
     def reset(self) -> None:
+        self.registry.reset_activity()
         self.env = AegisEnvironment()
         self.builder = ScenarioBuilder(self.env)
         self.incidents.clear()
@@ -99,6 +102,23 @@ app = FastAPI(
                 "clinical AI agents. Simulated FHIR sandbox only - not for "
                 "clinical use.",
 )
+
+
+@app.middleware("http")
+async def prevent_stale_live_state(request, call_next):
+    """The dashboard is a live incident console; API snapshots must not be cached.
+
+    A cached patient roll-up beside a fresh assistant answer is actively
+    misleading, not merely cosmetically stale. Static assets may still use the
+    browser's normal cache, but every state-bearing API/FHIR response is forced
+    through to the current in-process workspace.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith(("/api/", "/fhir/")):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 # ======================================================================
@@ -143,6 +163,22 @@ class ExperimentRequest(BaseModel):
     conditions: List[str] = Field(default_factory=lambda: list(CONDITION_INFO.keys()))
     tasks_per_family: int = 2
     n_controls: int = 1
+
+
+class TransferRequest(BaseModel):
+    record_key: str = Field(..., min_length=3, max_length=160)
+    target_patient_id: str = Field(..., min_length=2, max_length=32)
+    destination: str = Field(..., max_length=40)
+
+
+class ManualReportRequest(BaseModel):
+    patient_id: str = Field(..., min_length=2, max_length=32)
+    record_key: Optional[str] = Field(None, max_length=160)
+    description: str = Field(..., min_length=10, max_length=1000)
+
+
+class ReportResolutionRequest(BaseModel):
+    note: str = Field(..., min_length=10, max_length=1000)
 
 
 # ======================================================================
@@ -325,6 +361,10 @@ def _patient_display(env: Any, patient_id: str) -> Dict[str, Any]:
     """Name and MRN for a patient token, or a graceful placeholder."""
     resource = env.fhir.read("Patient", patient_id)
     if not resource:
+        fixed = state.registry.patient(patient_id)
+        if fixed:
+            return {"id": patient_id, "name": fixed["name"],
+                    "mrn": fixed["mrn"], "birth_date": fixed["birth_date"]}
         return {"id": patient_id, "name": patient_id, "mrn": None, "birth_date": None}
     name = (resource.get("name") or [{}])[0]
     given = " ".join(name.get("given") or [])
@@ -361,7 +401,11 @@ def _record_rows(env: Any, patient_id: str) -> List[Dict[str, Any]]:
 
 @app.get("/api/patients")
 def list_patients(only_with_memory: bool = True) -> Dict[str, Any]:
-    """Patients that the agent holds memory about, with a per-patient trust roll-up."""
+    """Patient registry and agent memory, with separate authoritative counts.
+
+    The legacy memory-only default keeps research API clients stable. The
+    operator workspace explicitly requests all 160 fixed synthetic patients.
+    """
     env = state.env
     buckets: Dict[str, Dict[str, Any]] = {}
     for artifact in env.all_artifacts():
@@ -386,15 +430,27 @@ def list_patients(only_with_memory: bool = True) -> Dict[str, Any]:
         elif s == "suspected":
             bucket["under_review"] += 1
 
+    if not only_with_memory:
+        for patient in state.registry.patients():
+            buckets.setdefault(patient["id"], {
+                "patient": _patient_display(env, patient["id"]),
+                "records": 0, "active": 0, "repaired": 0,
+                "quarantined": 0, "withdrawn": 0, "under_review": 0,
+            })
+
     out = []
     for token, bucket in buckets.items():
+        source = state.registry.summary(token) if state.registry.patient(token) else {
+            "source_records": 0, "source_held": 0, "completed_transfers": 0,
+            "held_transfers": 0, "open_reports": 0,
+        }
         # One plain-language status per patient - this is what a nurse reads.
         # A patient whose only remaining records were withdrawn is NOT "no
         # issues": entries were wrongly filed against them and then removed,
         # and the clinician needs to know that happened.
         live = bucket["active"] + bucket["repaired"]
-        if bucket["quarantined"]:
-            status, headline = "attention", "Held for review"
+        if bucket["quarantined"] or source["source_held"] or source["held_transfers"] or source["open_reports"]:
+            status, headline = "attention", "Record needs review"
         elif bucket["under_review"]:
             status, headline = "checking", "Being checked"
         elif bucket["repaired"]:
@@ -402,8 +458,9 @@ def list_patients(only_with_memory: bool = True) -> Dict[str, Any]:
         elif bucket["withdrawn"] and not live:
             status, headline = "withdrawn", "Incorrect entries removed"
         else:
-            status, headline = "clear", "No issues found"
-        out.append({**bucket, "token": token, "status": status, "headline": headline})
+            status, headline = "clear", "No record mismatch detected"
+        out.append({**bucket, **source, "token": token,
+                    "status": status, "headline": headline})
 
     order = {"attention": 0, "checking": 1, "corrected": 2, "withdrawn": 3, "clear": 4}
     out.sort(key=lambda r: (order[r["status"]], r["patient"]["name"]))
@@ -419,8 +476,9 @@ def patient_record(patient_id: str) -> Dict[str, Any]:
     """
     env = state.env
     rows = _record_rows(env, patient_id)
-    if not rows:
-        raise HTTPException(404, f"no memory held about patient {patient_id}")
+    fixed = state.registry.patient(patient_id)
+    if not rows and not fixed:
+        raise HTTPException(404, f"patient {patient_id} not found")
 
     # A wrong-patient incident files a record under the WRONG patient, so the
     # repaired version and the version it replaced sit under different patient
@@ -453,9 +511,19 @@ def patient_record(patient_id: str) -> Dict[str, Any]:
         })
 
     held = [r for r in rows if r["state"] == "quarantined"]
+    source_records = state.registry.records(patient_id) if fixed else []
+    source_summary = state.registry.summary(patient_id) if fixed else {
+        "source_records": 0, "source_held": 0, "completed_transfers": 0,
+        "held_transfers": 0, "open_reports": 0,
+    }
     return {
         "patient": _patient_display(env, patient_id),
         "records": rows,
+        "source_records": source_records,
+        "source_summary": source_summary,
+        "transfers": state.registry.transfers(patient_id) if fixed else [],
+        "manual_reports": state.registry.reports(patient_id) if fixed else [],
+        "transfer_destinations": DESTINATIONS,
         "changes": changes,
         "held_for_review": held,
         "summary": {
@@ -466,6 +534,54 @@ def patient_record(patient_id: str) -> Dict[str, Any]:
             "withdrawn": sum(1 for r in rows if r["state"] in ("superseded", "tombstoned")),
         },
     }
+
+
+@app.get("/api/registry")
+def registry_overview() -> Dict[str, Any]:
+    patients = list_patients(only_with_memory=False)["patients"]
+    return {"patients": PATIENT_COUNT, "source_records": sum(p["source_records"] for p in patients),
+            "patients_needing_review": sum(p["status"] == "attention" for p in patients),
+            "synthetic_only": True,
+            "automatic_checks": ["patient identity", "source status", "transfer scope"],
+            "destinations": DESTINATIONS}
+
+
+@app.post("/api/registry/transfers")
+def transfer_record(req: TransferRequest) -> Dict[str, Any]:
+    """Check and record a proposed handover; unsafe transfers are held."""
+    try:
+        with state.lock:
+            return state.registry.transfer(req.record_key, req.target_patient_id,
+                                           req.destination)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/registry/reports")
+def report_record(req: ManualReportRequest) -> Dict[str, Any]:
+    """Manual fallback for a concern that deterministic checks cannot assess."""
+    try:
+        with state.lock:
+            return state.registry.report(req.patient_id, req.record_key,
+                                         req.description)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/registry/reports/{report_id}/dismiss")
+def dismiss_manual_report(report_id: int, req: ReportResolutionRequest) -> Dict[str, Any]:
+    """Record a reasoned review of a manually raised demo concern."""
+    try:
+        with state.lock:
+            return state.registry.dismiss_report(report_id, req.note)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 # ======================================================================
@@ -737,22 +853,30 @@ def run_baselines(req: BaselineRequest) -> Dict[str, Any]:
                   if req.incident_id in state.masks else "complete")
     rows = []
     with state.lock:
-        evaluator = MetricsEvaluator(env)
-        for condition in req.conditions:
-            env.restore(snapshot)
-            try:
-                outcome = BaselineRunner(env).run(condition, incident,
-                                                  followup_tasks=[incident.task])
-            except Exception as exc:
-                rows.append({"condition": condition, "error": str(exc)})
-                continue
-            metrics = evaluator.evaluate(outcome, incident, provenance=provenance,
-                                         followup_tasks=[incident.task])
-            row = metrics.to_row()
-            row["name"] = CONDITION_INFO[condition][0]
-            row["purpose"] = CONDITION_INFO[condition][1]
-            rows.append(row)
-        env.restore(snapshot)
+        # Baselines are counterfactual experiments, not operations on the live
+        # clinician workspace. Preserve the exact live vault before replaying
+        # the frozen incident snapshot and restore it even if a condition fails.
+        # Restoring `snapshot` here used to rewind a successfully recovered
+        # workspace, making patients disappear while case/chat state remained.
+        live_snapshot = env.snapshot()
+        try:
+            evaluator = MetricsEvaluator(env)
+            for condition in req.conditions:
+                env.restore(snapshot)
+                try:
+                    outcome = BaselineRunner(env).run(condition, incident,
+                                                      followup_tasks=[incident.task])
+                except Exception as exc:
+                    rows.append({"condition": condition, "error": str(exc)})
+                    continue
+                metrics = evaluator.evaluate(outcome, incident, provenance=provenance,
+                                             followup_tasks=[incident.task])
+                row = metrics.to_row()
+                row["name"] = CONDITION_INFO[condition][0]
+                row["purpose"] = CONDITION_INFO[condition][1]
+                rows.append(row)
+        finally:
+            env.restore(live_snapshot)
     return {"incident_id": req.incident_id, "provenance": provenance, "results": rows}
 
 
@@ -770,7 +894,11 @@ def review_queue() -> Dict[str, Any]:
                     **artifact.to_local_dict(),
                     "quarantine_reason": artifact.quarantine_reason,
                 })
-    return {"count": len(items), "items": items}
+    registry_items = state.registry.review_items()
+    return {"count": len(items), "items": items,
+            "registry_count": len(registry_items),
+            "registry_items": registry_items,
+            "total_count": len(items) + len(registry_items)}
 
 
 @app.post("/api/review")
@@ -947,26 +1075,19 @@ class AssistantRequest(BaseModel):
 
 
 def _resolve_patient_token(env: Any, needle: str) -> Optional[str]:
-    """Match a free-text patient reference to a token we actually hold."""
+    """Resolve one synthetic patient; ambiguous names require an ID or MRN."""
     if not needle:
         return None
-    probe = needle.strip().lower().replace(" ", "")
-    tokens = {a.patient_scope for a in env.all_artifacts() if a.patient_scope}
-    for token in tokens:
-        display = _patient_display(env, token)
-        if probe == token.lower():
-            return token
-        if display["mrn"] and probe == str(display["mrn"]).lower():
-            return token
-    # Fall back to a name substring, longest match wins.
-    best, best_len = None, 0
-    words = [w for w in re.split(r"[^a-z0-9]+", needle.lower()) if len(w) > 2]
-    for token in tokens:
-        name = _patient_display(env, token)["name"].lower()
-        score = sum(len(w) for w in words if w in name)
-        if score > best_len:
-            best, best_len = token, score
-    return best
+    probe = needle.strip().lower()
+    tokens = {p["id"] for p in state.registry.patients()}
+    tokens.update(a.patient_scope for a in env.all_artifacts() if a.patient_scope)
+    exact = [token for token in tokens if probe in (
+        token.lower(), str(_patient_display(env, token)["mrn"] or "").lower())]
+    if len(exact) == 1:
+        return exact[0]
+    names = [token for token in tokens
+             if _patient_display(env, token)["name"].lower() == probe]
+    return names[0] if len(names) == 1 else None
 
 
 
@@ -976,9 +1097,9 @@ def _live_state() -> Dict[str, Any]:
     incidents = list(state.incidents.values())
     recovered = set(state.recoveries)
     open_incidents = [i for i in incidents if i.incident_id not in recovered]
-    patients = list_patients()["patients"]
+    patients = list_patients(only_with_memory=False)["patients"]
     try:
-        queue = review_queue()["count"]
+        queue = review_queue()["total_count"]
     except Exception:
         queue = 0
     last = None
@@ -1010,9 +1131,8 @@ def _suggest(role: str, live: Dict[str, Any]) -> List[Dict[str, str]]:
     """The next steps worth offering, given what is actually true.
 
     Every suggestion must be something this role can actually do from here. A
-    clinician staring at an empty console is offered the way forward - switch to
-    the console that can create work - rather than a status query that will keep
-    returning "nothing is open".
+    Suggestions stay inside the signed-in workspace. Cross-role work is named as
+    an escalation, never implemented as an invisible role switch.
     """
     out: List[Dict[str, str]] = []
 
@@ -1022,21 +1142,28 @@ def _suggest(role: str, live: Dict[str, Any]) -> List[Dict[str, str]]:
             out.append({"label": "How far did it spread?",
                         "message": "how far did it spread"})
         else:
-            out.append({"label": "Take me to the safety console",
-                        "message": "switch to the safety officer role"})
+            out.append({"label": "What should my role do now?",
+                        "message": "what should I do about the open incident"})
+            out.append({"label": "Show the case inbox",
+                        "message": "show the case inbox"})
 
     elif not live["incidents"]:
+        if live["patients_attention"] and role in ("clinician", "researcher"):
+            out.append({"label": "Who needs attention?",
+                        "message": "which patients need attention"})
+        if live["queue"] and role in ("compliance", "researcher"):
+            out.append({"label": "What needs review?",
+                        "message": "what is waiting for me"})
         if role in ("safety", "researcher"):
             out.append({"label": "Do the whole thing for me",
                         "message": "sort it out end to end"})
             out.append({"label": "Just report a wrong registration",
                         "message": "we registered the wrong patient"})
         else:
-            # A dead end otherwise: these roles cannot create an incident.
-            out.append({"label": "Take me to the safety console",
-                        "message": "switch to the safety officer role"})
             out.append({"label": "What can this system do?",
                         "message": "explain the care loop"})
+            out.append({"label": "Show the case inbox",
+                        "message": "show the case inbox"})
 
     else:
         if live["patients_attention"] and role in ("clinician", "researcher"):
@@ -1050,16 +1177,16 @@ def _suggest(role: str, live: Dict[str, Any]) -> List[Dict[str, str]]:
                 out.append({"label": "See what changed",
                             "message": "which patients were corrected"})
             elif role == "safety":
-                out.append({"label": "See it from the nurse's side",
-                            "message": "switch to the clinician role"})
+                out.append({"label": "Review containment status",
+                            "message": "what is the current system status"})
         if role in ("compliance", "researcher"):
             out.append({"label": "Did anything leak?", "message": "did any data leak"})
         if role in ("safety", "researcher"):
             out.append({"label": "Report a different kind of error",
                         "message": "we copied a fact from the wrong chart"})
         if role == "clinician":
-            out.append({"label": "Was anything shared it shouldn't be?",
-                        "message": "switch to the compliance role"})
+            out.append({"label": "Show the case inbox",
+                        "message": "show the case inbox"})
 
     # Never repeat a label; never offer more than fits comfortably.
     seen, unique = set(), []
@@ -1093,9 +1220,10 @@ def _explain_state(topic: str, role: str, live: Dict[str, Any]) -> str:
                 f"{'approved' if last['safe_resume'] else 'withheld'}. "
                 f"{live['patients']} patient(s) have records, "
                 f"{live['patients_corrected']} of them corrected.")
-    return ("Nothing has happened in this sandbox yet - no error has been reported, "
-            "so there is nothing to recover and no patient records to review. "
-            "Report an error and I will walk you through what the system does about it.")
+    return (f"The fixed synthetic registry contains {live['patients']} patients. "
+            "AEGIS checks patient identity and source status during handover. "
+            "No recovery incident has been reported yet. Open a patient to inspect "
+            "source records, try a transfer, or report a concern manually.")
 
 
 @app.get("/api/assistant/status")
@@ -1157,29 +1285,32 @@ def _confirmation_plan(action: str, params: Dict[str, Any],
 
 
 def _patient_name_intent(env: Any, message: str, role: str) -> Optional[Dict[str, Any]]:
-    """Resolve "show me Devraj" locally, by matching against patients we hold.
+    """Resolve a patient locally without guessing between repeated names.
 
     Doing this here rather than in the model costs nothing, is exact, and means
     patient names never have to be sent to an external API to be understood.
     """
     if role not in ("clinician", "researcher"):
         return None
-    words = {w for w in re.split(r"[^A-Za-z0-9]+", message.lower()) if len(w) > 2}
-    if not words:
-        return None
-    for token in {a.patient_scope for a in env.all_artifacts() if a.patient_scope}:
+    tokens = {p["id"] for p in state.registry.patients()}
+    tokens.update(a.patient_scope for a in env.all_artifacts() if a.patient_scope)
+    lower = message.lower()
+    matches = []
+    for token in tokens:
         display = _patient_display(env, token)
-        if token.lower() in words:
-            return {"action": "show_patient", "params": {"patient": token},
-                    "source": "local", "reply": ""}
         mrn = str(display["mrn"] or "").lower()
-        if mrn and mrn in words:
+        if re.search(rf"\b{re.escape(token.lower())}\b", lower) or \
+                (mrn and re.search(rf"\b{re.escape(mrn)}\b", lower)):
             return {"action": "show_patient", "params": {"patient": token},
                     "source": "local", "reply": ""}
-        name = display["name"].lower()
-        if any(part in words for part in name.split() if len(part) > 2):
-            return {"action": "show_patient", "params": {"patient": token},
-                    "source": "local", "reply": ""}
+        if re.search(rf"\b{re.escape(display['name'].lower())}\b", lower):
+            matches.append(token)
+    if len(matches) == 1:
+        return {"action": "show_patient", "params": {"patient": matches[0]},
+                "source": "local", "reply": ""}
+    if len(matches) > 1:
+        return {"action": "none", "params": {}, "source": "local",
+                "reply": "More than one synthetic patient has that name. Please use an MRN or patient ID."}
     return None
 
 
@@ -1319,7 +1450,7 @@ def assistant(req: AssistantRequest) -> Dict[str, Any]:
                     f"{case['held_records']} held. Next: {case['next_action']}.")
 
         elif action == "list_patients":
-            data = list_patients()
+            data = list_patients(only_with_memory=False)
             wanted = params.get("filter", "all")
             rows = data["patients"]
             if wanted != "all":
@@ -1327,14 +1458,14 @@ def assistant(req: AssistantRequest) -> Dict[str, Any]:
             out["ui"] = {"role": "clinician", "view": "records",
                          "filter": wanted, "refresh": True}
             if not data["count"]:
-                out["reply"] = ("The assistant holds no patient records yet. A safety "
-                                "officer needs to report and recover an incident first.")
+                out["reply"] = "No synthetic patients are loaded in this workspace."
             elif not rows:
                 out["reply"] = f"No patients are in the '{wanted}' state right now."
             else:
                 names = ", ".join(r["patient"]["name"] for r in rows[:4])
-                out["reply"] = (f"{len(rows)} patient(s): {names}"
-                                f"{' and others' if len(rows) > 4 else ''}.")
+                out["reply"] = (f"{len(rows)} synthetic patient(s): {names}"
+                                f"{' and others' if len(rows) > 4 else ''}. "
+                                "Search by name or MRN to choose one safely.")
 
         elif action == "show_patient":
             token = _resolve_patient_token(env, str(params.get("patient", "")))
@@ -1344,19 +1475,49 @@ def assistant(req: AssistantRequest) -> Dict[str, Any]:
             else:
                 record = patient_record(token)
                 summary = record["summary"]
-                out["ui"] = {"role": "clinician", "view": "records", "patient": token}
-                if summary["held"]:
-                    verdict = (f"{summary['held']} record(s) are held for review - do "
-                               "not rely on those yet.")
-                elif summary["corrected"]:
-                    verdict = (f"{summary['corrected']} record(s) were corrected and "
-                               "are safe to use.")
-                elif summary["withdrawn"] and not summary["in_use"]:
-                    verdict = (f"{summary['withdrawn']} entr(y/ies) were filed here in "
-                               "error and have been removed.")
+                # Resolve the detail and the clinician roll-up from the same
+                # workspace before claiming that the patient can be opened.
+                # If state changed between routing and execution, fail closed
+                # instead of silently selecting a different patient's card.
+                current = list_patients(only_with_memory=False)["patients"]
+                listed = next((row for row in current if row["token"] == token), None)
+                if listed is None or listed["records"] != summary["total"]:
+                    out["reply"] = (
+                        "The patient workspace changed while I was opening that record. "
+                        "I have not shown a different patient; please ask me to list "
+                        "patients again.")
+                    out["ui"] = {"role": "clinician", "view": "records",
+                                 "refresh": True}
                 else:
-                    verdict = "Nothing about this patient was affected."
-                out["reply"] = f"{record['patient']['name']}: {verdict}"
+                    out["ui"] = {"role": "clinician", "view": "records",
+                                 "patient": token, "refresh": True}
+                    out["patient_record"] = record
+                    total = summary["total"]
+                    source = record["source_summary"]
+                    if source["source_held"] or source["held_transfers"] or source["open_reports"]:
+                        verdict = (
+                            f"{source['source_records']} source record(s), "
+                            f"{source['source_held']} held by identity or status checks, "
+                            f"{source['held_transfers']} blocked handover(s), and "
+                            f"{source['open_reports']} manual concern(s). "
+                            "Do not rely on held items; open the patient page to review why.")
+                    elif summary["held"]:
+                        verdict = (
+                            f"{total} total record(s) in assistant memory; {summary['held']} are held for "
+                            "review. Do not rely on the held records yet.")
+                    elif summary["corrected"]:
+                        verdict = (
+                            f"{total} total record(s); {summary['corrected']} were "
+                            "corrected and are safe to use.")
+                    elif summary["withdrawn"] and not summary["in_use"]:
+                        verdict = (
+                            f"{total} total record(s); {summary['withdrawn']} were "
+                            "filed here in error and have been removed.")
+                    else:
+                        verdict = (f"{source['source_records']} source record(s) and "
+                                   f"{total} assistant memory entries; no identity or "
+                                   "status mismatch detected. Clinical correctness is not assessed.")
+                    out["reply"] = f"{record['patient']['name']}: {verdict}"
 
         elif action == "show_boundary":
             out["ui"] = {"role": "compliance", "view": "assurance", "panel": "boundary"}
@@ -1368,8 +1529,10 @@ def assistant(req: AssistantRequest) -> Dict[str, Any]:
         elif action == "show_queue":
             queue = review_queue()
             out["ui"] = {"role": "compliance", "view": "assurance", "panel": "queue"}
-            out["reply"] = (f"{queue['count']} record(s) are waiting on a human decision."
-                            if queue["count"]
+            out["reply"] = (f"{queue['total_count']} item(s) need review: "
+                            f"{queue['registry_count']} source-record or manual concerns "
+                            f"and {queue['count']} assistant-memory items."
+                            if queue["total_count"]
                             else "Nothing is waiting on you - the queue is empty.")
 
         elif action == "run_leakage_tests":
@@ -1390,13 +1553,10 @@ def assistant(req: AssistantRequest) -> Dict[str, Any]:
             out["reply"] = "Cleared. The sandbox is back to a clean state."
 
         elif action == "switch_role":
-            target = params.get("role")
-            if target not in {"clinician", "safety", "compliance", "researcher"}:
-                out["reply"] = ("Which role - clinician, safety, compliance, or "
-                                "researcher?")
-            else:
-                out["ui"] = {"role": target}
-                out["reply"] = f"Switched to the {target} console."
+            out["reply"] = (
+                f"This session is locked to the {req.role} workspace. I cannot "
+                "change roles from chat. Use the workspace menu to end this session, "
+                "then choose a different role at login.")
 
         elif action == "navigate":
             view = params.get("view")
@@ -1484,11 +1644,11 @@ def assistant(req: AssistantRequest) -> Dict[str, Any]:
     # the assistant lead rather than wait, and it keeps the console reachable
     # for anyone who does not know what to type.
     live_after = _live_state()
-    # Suggest for the role the user ENDS UP in. After a switch the caller is no
-    # longer in req.role, and offering the previous role's next step would loop
-    # them back to the console they just left.
-    effective_role = out.get("ui", {}).get("role") or req.role
-    out["suggestions"] = _suggest(effective_role, live_after)
+    # UI instructions may identify which role owns a case, but a chat response
+    # can never change the signed-in role. Keep the client session canonical.
+    if out.get("ui", {}).get("role"):
+        out["ui"]["role"] = req.role
+    out["suggestions"] = _suggest(req.role, live_after)
     out["state"] = live_after
     if out["suggestions"]:
         # A standing offer, so a bare "yes" executes the obvious next step.
